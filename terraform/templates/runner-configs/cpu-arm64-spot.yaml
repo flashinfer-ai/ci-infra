@@ -1,0 +1,125 @@
+# CPU ARM64 Spot Runners
+# TODO: Explore removing backward-compat labels and using exactMatch: false
+#       to simplify config (job with fewer labels would match runner with more)
+matcherConfig:
+  exactMatch: true
+  labelMatchers:
+    # Backward compatible (current workflow)
+    - [self-hosted, linux, arm64, cpu]
+    # Explicit spot label (for on-demand fallback workflow)
+    - [self-hosted, linux, arm64, cpu, spot]
+  priority: 1
+fifo: true
+
+runner_config:
+  runner_os: linux
+  runner_architecture: arm64
+  runner_name_prefix: flashinfer-cpu-arm64-
+  runner_run_as: ubuntu
+
+  # Allow IMDSv1 for compatibility with existing scripts (task_show_node_info.sh)
+  runner_metadata_options:
+    instance_metadata_tags: "enabled"
+    http_endpoint: "enabled"
+    http_tokens: "optional"
+    http_put_response_hop_limit: 2
+
+  # Use Ubuntu-compatible user-data script
+  userdata_template: ./templates/user-data.sh
+
+  enable_organization_runners: true
+
+  # Custom labels
+  runner_extra_labels:
+    - cpu
+    - spot
+
+  enable_ephemeral_runners: false
+
+  # Large instances for AOT compilation (200-600 GiB memory)
+  # Many instance types for maximum spot availability (all Graviton/ARM64)
+  instance_types:
+    # 512 GiB - r-series 16xlarge (Graviton)
+    - r8g.16xlarge    # 64 vCPUs, 512 GiB (Graviton4)
+    - r7g.16xlarge    # 64 vCPUs, 512 GiB (Graviton3)
+    - r6g.16xlarge    # 64 vCPUs, 512 GiB (Graviton2)
+    # 512 GiB - x2gd high-memory (Graviton2)
+    - x2gd.8xlarge    # 32 vCPUs, 512 GiB (Graviton2, NVMe)
+    # 384 GiB - r-series 12xlarge (Graviton)
+    - r8g.12xlarge    # 48 vCPUs, 384 GiB (Graviton4)
+    - r7g.12xlarge    # 48 vCPUs, 384 GiB (Graviton3)
+    - r6g.12xlarge    # 48 vCPUs, 384 GiB (Graviton2)
+    # 384 GiB - m-series 24xlarge (Graviton)
+    - m7g.24xlarge    # 96 vCPUs, 384 GiB (Graviton3)
+    - m6g.24xlarge    # 96 vCPUs, 384 GiB (Graviton2)
+    # 256 GiB - r-series 8xlarge (Graviton)
+    - r8g.8xlarge     # 32 vCPUs, 256 GiB (Graviton4)
+    - r7g.8xlarge     # 32 vCPUs, 256 GiB (Graviton3)
+    - r6g.8xlarge     # 32 vCPUs, 256 GiB (Graviton2)
+    # 256 GiB - r-series with NVMe (Graviton)
+    - r6gd.8xlarge    # 32 vCPUs, 256 GiB (Graviton2, NVMe)
+    - r7gd.8xlarge    # 32 vCPUs, 256 GiB (Graviton3, NVMe)
+    # 256 GiB - m-series 16xlarge (Graviton)
+    - m8g.16xlarge    # 64 vCPUs, 256 GiB (Graviton4)
+    - m7g.16xlarge    # 64 vCPUs, 256 GiB (Graviton3)
+    - m6g.16xlarge    # 64 vCPUs, 256 GiB (Graviton2)
+    # 256 GiB - m-series with NVMe (Graviton)
+    - m6gd.16xlarge   # 64 vCPUs, 256 GiB (Graviton2, NVMe)
+    - m7gd.16xlarge   # 64 vCPUs, 256 GiB (Graviton3, NVMe)
+    # 256 GiB - x2gd high-memory (Graviton2)
+    - x2gd.4xlarge    # 16 vCPUs, 256 GiB (Graviton2, NVMe)
+    # 384 GiB - r-series with NVMe 12xlarge (Graviton)
+    - r6gd.12xlarge   # 48 vCPUs, 384 GiB (Graviton2, NVMe)
+    - r7gd.12xlarge   # 48 vCPUs, 384 GiB (Graviton3, NVMe)
+    # 512 GiB - r-series with NVMe 16xlarge (Graviton)
+    - r6gd.16xlarge   # 64 vCPUs, 512 GiB (Graviton2, NVMe)
+    - r7gd.16xlarge   # 64 vCPUs, 512 GiB (Graviton3, NVMe)
+    # im4gn storage optimized (Graviton2) - only 16xlarge meets 200 GiB threshold
+    - im4gn.16xlarge  # 64 vCPUs, 256 GiB (Graviton2, NVMe)
+
+  instance_target_capacity_type: spot
+  # Use "capacity-optimized" - prioritizes capacity stability
+  instance_allocation_strategy: capacity-optimized
+  enable_on_demand_failover_for_errors:
+    - InsufficientInstanceCapacity
+    - SpotMaxPriceTooLow
+    - MaxSpotInstanceCountExceeded
+
+  # NOT setting create_service_linked_role_spot (already created by cpu-x64)
+
+  # Increased from 5 to 10 - each workflow has 4 ARM AOT jobs
+  runners_maximum_count: 50
+  delay_webhook_event: 30
+  scale_down_schedule_expression: "cron(*/5 * * * ? *)"
+  minimum_running_time_in_minutes: 10
+  runner_boot_time_in_minutes: 10
+
+  # Use Ubuntu 22.04 ARM64 AMI
+  ami:
+    owners:
+      - "099720109477"  # Canonical
+    filter:
+      name:
+        - "ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-arm64-server-*"
+      state:
+        - available
+
+  block_device_mappings:
+    - device_name: /dev/sda1
+      volume_size: 500
+      volume_type: gp3
+      delete_on_termination: true
+      encrypted: true
+
+  enable_ssm_on_runners: true
+  enable_cloudwatch_agent: true
+
+  runner_log_files:
+    - log_group_name: syslog
+      prefix_log_group: true
+      file_path: /var/log/syslog
+      log_stream_name: "{instance_id}"
+    - log_group_name: user_data
+      prefix_log_group: true
+      file_path: /var/log/user-data.log
+      log_stream_name: "{instance_id}/user_data"

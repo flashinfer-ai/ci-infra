@@ -1,0 +1,33 @@
+#!/bin/bash
+# FlashInfer CI - Environment Setup Script
+#
+# Usage:
+#   1. Copy this file: cp setup-env.sh.example setup-env.sh
+#   2. Edit setup-env.sh with your values
+#   3. Source it: source setup-env.sh
+#   4. Run terraform: terraform plan && terraform apply
+#
+# NOTE: setup-env.sh is git-ignored - never commit your secrets!
+
+# AWS Region (optional, defaults to us-west-2)
+export TF_VAR_aws_region="us-west-2"
+
+# GitHub App ID (find this on your GitHub App settings page)
+export TF_VAR_github_app_id="YOUR_GITHUB_APP_ID"
+
+# GitHub App Private Key (base64 encoded)
+# Option 1: Inline (replace path with your actual key file)
+export TF_VAR_github_app_key_base64="$(base64 -i /path/to/your-github-app.private-key.pem)"
+
+# Option 2: Paste the base64 string directly
+# export TF_VAR_github_app_key_base64="LS0tLS1CRUdJTi..."
+
+# Webhook Secret (generate a random one or use existing)
+# Generate new: openssl rand -hex 32
+export TF_VAR_webhook_secret="YOUR_WEBHOOK_SECRET"
+
+echo "Environment variables set for FlashInfer CI deployment"
+echo "  TF_VAR_aws_region: $TF_VAR_aws_region"
+echo "  TF_VAR_github_app_id: $TF_VAR_github_app_id"
+echo "  TF_VAR_github_app_key_base64: [REDACTED - $(echo $TF_VAR_github_app_key_base64 | wc -c | tr -d ' ') chars]"
+echo "  TF_VAR_webhook_secret: [REDACTED]"

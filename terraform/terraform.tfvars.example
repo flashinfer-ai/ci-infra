@@ -1,0 +1,40 @@
+# FlashInfer GitHub Actions Runner Configuration
+#
+# ============================================================================
+# RECOMMENDED: Use environment variables instead of this file!
+# ============================================================================
+#
+# Set these environment variables before running terraform:
+#
+#   export TF_VAR_github_app_id="YOUR_APP_ID"
+#   export TF_VAR_github_app_key_base64="$(base64 -i /path/to/your-app.private-key.pem)"
+#   export TF_VAR_webhook_secret="$(openssl rand -hex 32)"
+#
+# Then simply run:
+#   terraform plan
+#   terraform apply
+#
+# ============================================================================
+# ALTERNATIVE: Copy this file to terraform.tfvars (git-ignored)
+# ============================================================================
+#
+# If you prefer a file-based approach:
+#   cp terraform.tfvars.example terraform.tfvars
+#   # Edit terraform.tfvars with your values
+#   # NEVER commit terraform.tfvars to git!
+#
+# ============================================================================
+
+# AWS Region (can also be set via TF_VAR_aws_region or left as default)
+# aws_region = "us-west-2"
+
+# GitHub App ID (from GitHub App settings page)
+# github_app_id = "123456"
+
+# GitHub App private key (base64 encoded)
+# Generate with: base64 -i your-app.private-key.pem
+# github_app_key_base64 = "LS0tLS1CRUdJTi..."
+
+# Webhook secret (random string for signature verification)
+# Generate with: openssl rand -hex 32
+# webhook_secret = "your-random-webhook-secret"

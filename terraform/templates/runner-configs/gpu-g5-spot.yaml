@@ -1,0 +1,106 @@
+# A10G GPU (SM86 / Ampere architecture) - Spot Runners
+# TODO: Explore removing backward-compat labels and using exactMatch: false
+#       to simplify config (job with fewer labels would match runner with more)
+matcherConfig:
+  exactMatch: true
+  labelMatchers:
+    # Backward compatible (current workflow)
+    - [self-hosted, linux, x64, gpu, sm86]
+    - [self-hosted, linux, x64, gpu, a10g]
+    - [self-hosted, linux, x64, gpu, ampere]
+    # Explicit spot label (for on-demand fallback workflow)
+    - [self-hosted, linux, x64, gpu, sm86, spot]
+    - [self-hosted, linux, x64, gpu, a10g, spot]
+    - [self-hosted, linux, x64, gpu, ampere, spot]
+  priority: 1
+fifo: true
+
+runner_config:
+  runner_os: linux
+  runner_architecture: x64
+  runner_name_prefix: flashinfer-gpu-g5-
+  runner_run_as: ubuntu
+
+  # Allow IMDSv1 for compatibility with existing scripts (task_show_node_info.sh)
+  runner_metadata_options:
+    instance_metadata_tags: "enabled"
+    http_endpoint: "enabled"
+    http_tokens: "optional"
+    http_put_response_hop_limit: 2
+
+  # Use GPU-specific user-data script (Deep Learning AMI has Docker/NVIDIA pre-installed)
+  userdata_template: ./templates/user-data-gpu.sh
+
+  enable_organization_runners: true
+
+  # Multiple labels for flexible targeting
+  runner_extra_labels:
+    - gpu
+    - nvidia
+    - a10g
+    - sm86
+    - ampere
+    - spot
+
+  enable_ephemeral_runners: false
+
+  # G5 instances have NVIDIA A10G GPUs
+  # More instance types = better spot availability
+  instance_types:
+    - g5.2xlarge      # 8 vCPUs, 32 GiB, 1x A10G (best spot availability)
+    - g5.4xlarge      # 16 vCPUs, 64 GiB, 1x A10G
+    - g5.8xlarge      # 32 vCPUs, 128 GiB, 1x A10G
+
+  instance_target_capacity_type: spot
+  # Use "capacity-optimized" (same as Jenkins) - prioritizes capacity stability over price
+  instance_allocation_strategy: capacity-optimized
+  # Failover to on-demand when spot is unavailable or interrupted
+  enable_on_demand_failover_for_errors:
+    - InsufficientInstanceCapacity
+    - SpotMaxPriceTooLow
+    - MaxSpotInstanceCountExceeded
+
+  runners_maximum_count: 50
+  delay_webhook_event: 30
+  scale_down_schedule_expression: "cron(*/5 * * * ? *)"
+  minimum_running_time_in_minutes: 15
+  runner_boot_time_in_minutes: 15
+
+  # Keep 1 GPU runner warm during work hours
+  idle_config:
+    - cron: "* 17-23 * * 1-5"
+      timeZone: "UTC"
+      idleCount: 1
+    - cron: "* 0-2 * * 2-6"
+      timeZone: "UTC"
+      idleCount: 1
+
+  # Use AWS Deep Learning AMI with Ubuntu 22.04
+  ami:
+    owners:
+      - "898082745236"
+    filter:
+      name:
+        - "Deep Learning OSS Nvidia Driver AMI GPU PyTorch 2.* (Ubuntu 22.04) *"
+      state:
+        - available
+
+  block_device_mappings:
+    - device_name: /dev/sda1
+      volume_size: 500
+      volume_type: gp3
+      delete_on_termination: true
+      encrypted: true
+
+  enable_ssm_on_runners: true
+  enable_cloudwatch_agent: true
+
+  runner_log_files:
+    - log_group_name: syslog
+      prefix_log_group: true
+      file_path: /var/log/syslog
+      log_stream_name: "{instance_id}"
+    - log_group_name: user_data
+      prefix_log_group: true
+      file_path: /var/log/user-data.log
+      log_stream_name: "{instance_id}/user_data"

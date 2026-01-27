@@ -1,0 +1,86 @@
+# A10G GPU (SM86 / Ampere architecture) - On-Demand Runners (fallback for spot failures)
+matcherConfig:
+  exactMatch: true
+  labelMatchers:
+    - [self-hosted, linux, x64, gpu, sm86, on-demand]
+    - [self-hosted, linux, x64, gpu, a10g, on-demand]
+    - [self-hosted, linux, x64, gpu, ampere, on-demand]
+  priority: 10
+fifo: true
+
+runner_config:
+  runner_os: linux
+  runner_architecture: x64
+  runner_name_prefix: flashinfer-gpu-g5-od-
+  runner_run_as: ubuntu
+
+  # Allow IMDSv1 for compatibility with existing scripts (task_show_node_info.sh)
+  runner_metadata_options:
+    instance_metadata_tags: "enabled"
+    http_endpoint: "enabled"
+    http_tokens: "optional"
+    http_put_response_hop_limit: 2
+
+  # Use GPU-specific user-data script (Deep Learning AMI has Docker/NVIDIA pre-installed)
+  userdata_template: ./templates/user-data-gpu.sh
+
+  enable_organization_runners: true
+
+  # Multiple labels for flexible targeting
+  runner_extra_labels:
+    - gpu
+    - nvidia
+    - a10g
+    - sm86
+    - ampere
+    - on-demand
+
+  enable_ephemeral_runners: false
+
+  # G5 instances have NVIDIA A10G GPUs
+  instance_types:
+    - g5.2xlarge      # 8 vCPUs, 32 GiB, 1x A10G
+    - g5.4xlarge      # 16 vCPUs, 64 GiB, 1x A10G
+    - g5.8xlarge      # 32 vCPUs, 128 GiB, 1x A10G
+
+  # On-demand instances (no spot)
+  instance_target_capacity_type: on-demand
+
+  # Scaling configuration
+  runners_maximum_count: 50
+  delay_webhook_event: 30
+  scale_down_schedule_expression: "cron(*/5 * * * ? *)"
+  minimum_running_time_in_minutes: 15
+  runner_boot_time_in_minutes: 15
+
+  # No idle_config - on-demand runners are fallback only, don't keep warm
+
+  # Use AWS Deep Learning AMI with Ubuntu 22.04
+  ami:
+    owners:
+      - "898082745236"
+    filter:
+      name:
+        - "Deep Learning OSS Nvidia Driver AMI GPU PyTorch 2.* (Ubuntu 22.04) *"
+      state:
+        - available
+
+  block_device_mappings:
+    - device_name: /dev/sda1
+      volume_size: 500
+      volume_type: gp3
+      delete_on_termination: true
+      encrypted: true
+
+  enable_ssm_on_runners: true
+  enable_cloudwatch_agent: true
+
+  runner_log_files:
+    - log_group_name: syslog
+      prefix_log_group: true
+      file_path: /var/log/syslog
+      log_stream_name: "{instance_id}"
+    - log_group_name: user_data
+      prefix_log_group: true
+      file_path: /var/log/user-data.log
+      log_stream_name: "{instance_id}/user_data"

@@ -1,0 +1,19 @@
+# Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfplan
+
+# Secrets - NEVER commit these
+terraform.tfvars
+*.auto.tfvars
+*.pem
+*private-key*
+setup-env.sh
+
+# IDE
+.idea/
+*.swp
+*.swo
+.DS_Store
