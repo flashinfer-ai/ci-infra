@@ -1,15 +1,6 @@
 #!/bin/bash
-# Copyright 2025 FlashInfer Contributors
-# Licensed under the Apache License, Version 2.0
-
-# Webhook Safety Check Script (CI-friendly)
-# Checks if a terraform plan would change the webhook URL.
-# Designed for use in CI/CD pipelines.
-#
-# Exit codes:
-#   0 = Safe to apply (no webhook-breaking changes)
-#   1 = Error during check
-#   2 = Webhook-breaking changes detected (blocks apply)
+# Check if terraform plan would change the webhook URL.
+# Exit codes: 0 = safe, 1 = error, 2 = webhook-breaking changes
 
 set -e
 
@@ -19,8 +10,6 @@ PLAN_FILE="${1:-tfplan.binary}"
 
 cd "$TERRAFORM_DIR"
 
-# If plan file provided as argument and exists, use it
-# Otherwise, generate a new plan
 if [ ! -f "$PLAN_FILE" ]; then
     echo "Generating Terraform plan..."
     terraform plan -out="$PLAN_FILE" -detailed-exitcode || PLAN_EXIT_CODE=$?
@@ -36,14 +25,9 @@ if [ ! -f "$PLAN_FILE" ]; then
     fi
 fi
 
-# Convert to JSON for analysis
 echo "Analyzing plan for webhook-breaking changes..."
 terraform show -json "$PLAN_FILE" > tfplan.json
 
-# Check for API Gateway recreation
-# This includes:
-# - aws_apigatewayv2_api (the main API Gateway resource)
-# - Any resource with "webhook" and "api" in the name that's being recreated
 WEBHOOK_BREAKING=$(jq -e '
   [.resource_changes[]? |
    select(.address | test("apigatewayv2_api|webhook.*api|api.*webhook"; "i")) |
@@ -54,10 +38,8 @@ WEBHOOK_BREAKING=$(jq -e '
 ' tfplan.json 2>/dev/null) || WEBHOOK_BREAKING="false"
 
 if [ "$WEBHOOK_BREAKING" = "true" ]; then
-    echo ""
     echo "::error::WEBHOOK-BREAKING CHANGES DETECTED"
-    echo ""
-    echo "The following changes would recreate API Gateway resources:"
+    echo "Affected resources:"
     jq -r '
       .resource_changes[]? |
       select(.address | test("apigatewayv2_api|webhook.*api|api.*webhook"; "i")) |
@@ -67,14 +49,10 @@ if [ "$WEBHOOK_BREAKING" = "true" ]; then
       ) |
       "  - \(.address): \(.change.actions | join(" -> "))"
     ' tfplan.json
-    echo ""
-    echo "This would change the webhook URL and disrupt production CI."
-    echo "Apply is blocked. Review changes or apply manually if intentional."
-
     rm -f tfplan.json
     exit 2
 fi
 
-echo "Webhook safety check passed - no webhook-breaking changes."
+echo "Webhook safety check passed."
 rm -f tfplan.json
 exit 0

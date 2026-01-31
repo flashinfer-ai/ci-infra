@@ -1,20 +1,4 @@
-"""
-CB Manager Lambda - Checks AWS Capacity Block status for FlashInfer CI
-
-This Lambda is READ-ONLY and handles:
-1. Checking for active Capacity Blocks
-2. Reporting CB status
-
-IMPORTANT: Automatic CB purchase has been DISABLED.
-CBs must be purchased manually via AWS Console to prevent accidental duplicate purchases.
-
-Manual purchase instructions:
-1. Go to AWS Console > EC2 > Capacity Reservations > Create Capacity Block
-2. Select instance type (p6-b200.48xlarge for B200, p5.48xlarge for H100)
-3. Select duration and AZ
-4. Purchase the CB manually
-5. The scale-up Lambda will automatically discover and use the active CB
-"""
+"""CB Manager Lambda - checks Capacity Block status (read-only)."""
 
 import boto3
 import json
@@ -23,23 +7,16 @@ import os
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 
-# Configure logging
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# AWS clients
 ec2 = boto3.client('ec2')
-
-# Configuration from environment
 DEFAULT_INSTANCE_TYPE = os.environ.get('INSTANCE_TYPE', 'p6-b200.48xlarge')
 
-# Label to instance type mapping - determines which instance type to check based on job labels
 LABEL_TO_INSTANCE_TYPE = {
-    # Blackwell (B200) - SM100
     'b200': 'p6-b200.48xlarge',
     'sm100': 'p6-b200.48xlarge',
     'blackwell': 'p6-b200.48xlarge',
-    # Hopper (H100) - SM90
     'h100': 'p5.48xlarge',
     'sm90': 'p5.48xlarge',
     'hopper': 'p5.48xlarge',
@@ -47,10 +24,7 @@ LABEL_TO_INSTANCE_TYPE = {
 
 
 def get_instance_type_from_labels(labels: List[str]) -> Optional[str]:
-    """
-    Determine the instance type needed based on job labels.
-    Returns the first matching instance type, or None if no match.
-    """
+    """Determine instance type from job labels."""
     if not labels:
         return None
 
@@ -65,11 +39,7 @@ def get_instance_type_from_labels(labels: List[str]) -> Optional[str]:
 
 
 def get_active_capacity_blocks(instance_type: str, availability_zone: Optional[str] = None) -> List[Dict]:
-    """
-    Find active Capacity Block reservations for the given instance type.
-
-    Returns list of active CBs with their details.
-    """
+    """Find active CB reservations for the given instance type."""
     filters = [
         {'Name': 'instance-type', 'Values': [instance_type]},
         {'Name': 'state', 'Values': ['active', 'pending', 'payment-pending']},
@@ -83,7 +53,6 @@ def get_active_capacity_blocks(instance_type: str, availability_zone: Optional[s
 
         active_cbs = []
         for cr in response.get('CapacityReservations', []):
-            # Check if this is a Capacity Block (has end date)
             if cr.get('EndDate'):
                 start_date = cr.get('StartDate')
                 end_date = cr.get('EndDate')
@@ -107,22 +76,12 @@ def get_active_capacity_blocks(instance_type: str, availability_zone: Optional[s
 
 
 def handler(event: Dict[str, Any], context) -> Dict[str, Any]:
-    """
-    Lambda handler for CB Manager (READ-ONLY).
-
-    Event actions:
-    - check: Check for active CBs, return status
-    - status: Get current CB status (same as check)
-
-    NOTE: 'ensure' and 'purchase' actions are DISABLED.
-    CBs must be purchased manually via AWS Console.
-    """
+    """Lambda handler - check/status actions only (purchase disabled)."""
     logger.info(f"CB Manager invoked with event: {json.dumps(event)}")
 
     action = event.get('action', 'status')
     labels = event.get('labels', [])
 
-    # Determine instance type: explicit > from labels > default
     instance_type = event.get('instance_type')
     if not instance_type and labels:
         instance_type = get_instance_type_from_labels(labels)
@@ -130,15 +89,11 @@ def handler(event: Dict[str, Any], context) -> Dict[str, Any]:
         instance_type = DEFAULT_INSTANCE_TYPE
         logger.info(f"Using default instance type: {instance_type}")
 
-    # Optional AZ filter
     az = event.get('availability_zone')
 
     logger.info(f"Action: {action}, Instance Type: {instance_type}, AZ: {az or 'all'}")
-
-    # Check for active CBs (across all AZs by default)
     active_cbs = get_active_capacity_blocks(instance_type, availability_zone=az)
 
-    # Handle check/status actions
     if action in ['check', 'status']:
         return {
             'statusCode': 200,
@@ -149,7 +104,6 @@ def handler(event: Dict[str, Any], context) -> Dict[str, Any]:
             'has_active_cb': len(active_cbs) > 0,
         }
 
-    # 'ensure' and 'purchase' actions are DISABLED
     if action in ['ensure', 'purchase']:
         logger.warning(f"Action '{action}' is DISABLED. CBs must be purchased manually.")
         return {

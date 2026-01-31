@@ -93,8 +93,8 @@ jobs:
         if: steps.plan.outputs.has_changes == 'true'
         working-directory: terraform
         run: |
-          chmod +x ../scripts/check-webhook-safety.sh
-          ../scripts/check-webhook-safety.sh tfplan
+          chmod +x ../scripts/check-webhook.sh
+          ../scripts/check-webhook.sh tfplan
           safety_exit=$?
 
           if [ $safety_exit -eq 2 ]; then

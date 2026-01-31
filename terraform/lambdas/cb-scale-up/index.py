@@ -1,16 +1,4 @@
-"""
-Custom Capacity Block Scale-Up Lambda for FlashInfer CI
-
-This Lambda handles scaling up runners for Capacity Block instances (p5, p6).
-It operates independently from the upstream terraform-aws-github-runner module,
-allowing us to use upstream unmodified while supporting CB-based GPU instances.
-
-Flow:
-1. Receive workflow_job event from SQS (routed by EventBridge based on labels)
-2. Check for active Capacity Block matching the required instance type
-3. If CB found, launch instance into it using RunInstances API
-4. Tag instance for scale-down Lambda to find and manage
-"""
+"""CB Scale-Up Lambda - launches instances into active Capacity Blocks."""
 
 import json
 import logging
@@ -21,12 +9,9 @@ from typing import Optional, Dict, Any, List
 import boto3
 from botocore.exceptions import ClientError
 
-# Configure logging
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# Environment variables
-# Note: AWS_REGION is a reserved Lambda variable, so we use REGION instead
 REGION = os.environ.get('REGION', os.environ.get('AWS_REGION', 'us-west-2'))
 ENVIRONMENT = os.environ.get('ENVIRONMENT', 'flashinfer')
 LAUNCH_TEMPLATE_NAME = os.environ.get('LAUNCH_TEMPLATE_NAME')
@@ -35,22 +20,16 @@ INSTANCE_TYPE = os.environ.get('INSTANCE_TYPE')  # e.g., p6-b200.48xlarge
 RUNNER_NAME_PREFIX = os.environ.get('RUNNER_NAME_PREFIX', 'flashinfer-cb-')
 SSM_CONFIG_PATH = os.environ.get('SSM_CONFIG_PATH')
 
-# AWS clients
 ec2_client = boto3.client('ec2', region_name=REGION)
 
 
 class ScaleError(Exception):
-    """Error that should trigger SQS retry."""
+    """Error that triggers SQS retry."""
     pass
 
 
 def find_active_capacity_block(instance_type: str) -> Optional[Dict[str, Any]]:
-    """
-    Find an active Capacity Block reservation for the given instance type.
-
-    Returns:
-        Dict with 'id' and 'az' if found, None otherwise
-    """
+    """Find an active CB for the given instance type."""
     try:
         response = ec2_client.describe_capacity_reservations(
             Filters=[
@@ -59,7 +38,6 @@ def find_active_capacity_block(instance_type: str) -> Optional[Dict[str, Any]]:
             ]
         )
 
-        # Find a capacity block with available capacity
         for cr in response.get('CapacityReservations', []):
             if (cr.get('ReservationType') == 'capacity-block' and
                 cr.get('AvailableInstanceCount', 0) > 0):
@@ -104,12 +82,7 @@ def launch_instance_into_cb(
     subnet_id: str,
     job_info: Dict[str, Any]
 ) -> str:
-    """
-    Launch an EC2 instance into the Capacity Block.
-
-    Returns:
-        Instance ID of the launched instance
-    """
+    """Launch an EC2 instance into the Capacity Block."""
     tags = [
         {'Key': 'Name', 'Value': f'{ENVIRONMENT}-cb-action-runner'},
         {'Key': 'ghr:Application', 'Value': 'github-action-runner'},
@@ -122,7 +95,6 @@ def launch_instance_into_cb(
         {'Key': 'ManagedBy', 'Value': 'Terraform'},
     ]
 
-    # Add job-specific tags if available
     if job_info.get('repository'):
         tags.append({'Key': 'ghr:repository', 'Value': job_info['repository']})
     if job_info.get('workflow_job_id'):
@@ -166,7 +138,6 @@ def launch_instance_into_cb(
         error_code = e.response.get('Error', {}).get('Code', '')
         logger.error(f"Error launching instance: {e}")
 
-        # These errors should trigger retry
         retry_errors = [
             'InsufficientInstanceCapacity',
             'RequestLimitExceeded',
@@ -193,14 +164,9 @@ def parse_sqs_message(record: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
-    """
-    Lambda handler for CB scale-up.
-
-    Receives SQS events and launches instances into active Capacity Blocks.
-    """
+    """Lambda handler - receives SQS events and launches instances into CBs."""
     logger.info(f"Received event: {json.dumps(event)}")
 
-    # Validate required environment variables
     if not LAUNCH_TEMPLATE_NAME:
         raise ValueError("LAUNCH_TEMPLATE_NAME environment variable is required")
     if not INSTANCE_TYPE:
@@ -223,18 +189,14 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             job_info = parse_sqs_message(record)
             logger.info(f"Processing job: {job_info}")
 
-            # Step 1: Find active Capacity Block
             cb_info = find_active_capacity_block(INSTANCE_TYPE)
             if not cb_info:
-                # No CB available - raise ScaleError to trigger SQS retry
                 raise ScaleError(f"No active Capacity Block for {INSTANCE_TYPE}")
 
-            # Step 2: Find subnet in CB's availability zone
             subnet_id = find_subnet_in_az(cb_info['az'])
             if not subnet_id:
                 raise ScaleError(f"No subnet in {cb_info['az']}")
 
-            # Step 3: Launch instance into CB
             instance_id = launch_instance_into_cb(cb_info, subnet_id, job_info)
 
             results['successful'].append({
@@ -244,7 +206,6 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             })
 
         except ScaleError as e:
-            # ScaleError should trigger SQS retry via partial batch failure
             logger.warning(f"Scale error for message {message_id}: {e}")
             results['failed'].append({
                 'message_id': message_id,
@@ -253,7 +214,6 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             })
 
         except Exception as e:
-            # Other errors - log but don't retry
             logger.error(f"Error processing message {message_id}: {e}")
             results['failed'].append({
                 'message_id': message_id,
@@ -261,8 +221,6 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 'retry': False
             })
 
-    # Return partial batch failure response for SQS
-    # This tells SQS which messages to retry
     batch_item_failures = [
         {'itemIdentifier': f['message_id']}
         for f in results['failed']

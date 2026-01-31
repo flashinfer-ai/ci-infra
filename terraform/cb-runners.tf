@@ -1,11 +1,4 @@
-# Capacity Block Runners Infrastructure
-#
-# This file sets up custom infrastructure for Capacity Block (CB) based runners
-# (p5.48xlarge for H100, p6-b200.48xlarge for B200).
-#
-# This is separate from the upstream terraform-aws-github-runner module to avoid
-# patching upstream code. The upstream module handles spot/on-demand runners,
-# while this handles CB runners.
+# Capacity Block runners for H100 (p5.48xlarge) and B200 (p6-b200.48xlarge)
 
 locals {
   cb_runners = {
@@ -25,10 +18,6 @@ locals {
     }
   }
 }
-
-# =============================================================================
-# SQS Queues for CB Jobs
-# =============================================================================
 
 resource "aws_sqs_queue" "cb_builds" {
   for_each = local.cb_runners
@@ -59,10 +48,6 @@ resource "aws_sqs_queue" "cb_builds_dlq" {
     ManagedBy   = "Terraform"
   }
 }
-
-# =============================================================================
-# EventBridge Rules - Route CB-labeled jobs to our queues
-# =============================================================================
 
 resource "aws_cloudwatch_event_rule" "cb_workflow_job" {
   for_each = local.cb_runners
@@ -114,7 +99,6 @@ EOF
   }
 }
 
-# Allow EventBridge to send messages to SQS
 resource "aws_sqs_queue_policy" "cb_builds" {
   for_each = local.cb_runners
 
@@ -136,10 +120,6 @@ resource "aws_sqs_queue_policy" "cb_builds" {
     ]
   })
 }
-
-# =============================================================================
-# Lambda Function - CB Scale-Up
-# =============================================================================
 
 data "archive_file" "cb_scale_up" {
   type        = "zip"
@@ -179,7 +159,6 @@ resource "aws_lambda_function" "cb_scale_up" {
   }
 }
 
-# SQS trigger for Lambda
 resource "aws_lambda_event_source_mapping" "cb_scale_up" {
   for_each = local.cb_runners
 
@@ -189,10 +168,6 @@ resource "aws_lambda_event_source_mapping" "cb_scale_up" {
   function_response_types            = ["ReportBatchItemFailures"]
   maximum_batching_window_in_seconds = 0
 }
-
-# =============================================================================
-# IAM Role for CB Scale-Up Lambda
-# =============================================================================
 
 resource "aws_iam_role" "cb_scale_up" {
   name = "${local.environment}-cb-scale-up-lambda"
@@ -264,31 +239,20 @@ resource "aws_iam_role_policy" "cb_scale_up" {
   })
 }
 
-# =============================================================================
-# Launch Template for CB Instances
-# =============================================================================
-
 resource "aws_launch_template" "cb_runner" {
   for_each = local.cb_runners
 
   name        = "${local.environment}-${each.key}-launch-template"
   description = "Launch template for ${each.value.description} CB runners"
 
-  # Use Deep Learning AMI
   image_id = data.aws_ami.deep_learning.id
 
-  # Instance type set at launch time
-  # instance_type = each.value.instance_type
-
-  # IAM instance profile
   iam_instance_profile {
     name = aws_iam_instance_profile.cb_runner.name
   }
 
-  # Network
   vpc_security_group_ids = [aws_security_group.cb_runner.id]
 
-  # Storage - 500GB for deep learning workloads
   block_device_mappings {
     device_name = "/dev/xvda"
     ebs {
@@ -299,7 +263,6 @@ resource "aws_launch_template" "cb_runner" {
     }
   }
 
-  # Metadata options
   metadata_options {
     http_endpoint               = "enabled"
     http_tokens                 = "required"
@@ -307,7 +270,6 @@ resource "aws_launch_template" "cb_runner" {
     instance_metadata_tags      = "enabled"
   }
 
-  # User data - multi-runner setup (1x4-GPU + 4x1-GPU per node)
   user_data = base64encode(templatefile("${path.module}/templates/user-data-multi-runner.sh", {
     region              = var.aws_region
     environment         = local.environment
@@ -339,10 +301,9 @@ resource "aws_launch_template" "cb_runner" {
   }
 }
 
-# Deep Learning AMI
 data "aws_ami" "deep_learning" {
   most_recent = true
-  owners      = ["898082745236"]  # AWS Deep Learning AMI owner
+  owners      = ["898082745236"]
 
   filter {
     name   = "name"
@@ -354,10 +315,6 @@ data "aws_ami" "deep_learning" {
     values = ["available"]
   }
 }
-
-# =============================================================================
-# IAM Role for CB Runner Instances
-# =============================================================================
 
 resource "aws_iam_role" "cb_runner" {
   name = "${local.environment}-cb-runner"
@@ -449,16 +406,11 @@ resource "aws_iam_role_policy" "cb_runner" {
   })
 }
 
-# =============================================================================
-# Security Group for CB Runners
-# =============================================================================
-
 resource "aws_security_group" "cb_runner" {
   name        = "${local.environment}-cb-runner-sg"
   description = "Security group for CB runner instances"
   vpc_id      = module.vpc.vpc_id
 
-  # Outbound - allow all
   egress {
     from_port        = 0
     to_port          = 0
@@ -474,10 +426,6 @@ resource "aws_security_group" "cb_runner" {
     ManagedBy   = "Terraform"
   }
 }
-
-# =============================================================================
-# CB Manager Lambda (Status Checker - Read Only)
-# =============================================================================
 
 data "archive_file" "cb_manager" {
   type        = "zip"
@@ -553,10 +501,6 @@ resource "aws_iam_role_policy" "cb_manager" {
     ]
   })
 }
-
-# =============================================================================
-# Outputs
-# =============================================================================
 
 output "cb_queues" {
   description = "CB SQS queues"
