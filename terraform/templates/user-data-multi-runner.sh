@@ -18,10 +18,28 @@ ORG_NAME="${org_name}"
 RUNNER_GROUP="${runner_group}"
 LABELS_BASE="${labels_base}"
 
-# Derived values (using IMDSv2)
-IMDS_TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 300")
-INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
-RUNNER_BASE_DIR="/opt/actions-runner"
+# Use NVMe storage for runners (28TB available vs 40GB root)
+RUNNER_BASE_DIR="/opt/dlami/nvme/actions-runner"
+RUN_AS="ubuntu"
+
+# Wait for network and get instance ID via IMDSv2 with retry
+INSTANCE_ID=""
+for i in {1..30}; do
+    IMDS_TOKEN=$(curl -sf -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 300" 2>/dev/null || echo "")
+    if [ -n "$IMDS_TOKEN" ]; then
+        INSTANCE_ID=$(curl -sf -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" http://169.254.169.254/latest/meta-data/instance-id 2>/dev/null || echo "")
+        if [ -n "$INSTANCE_ID" ]; then
+            break
+        fi
+    fi
+    echo "Waiting for IMDS... (attempt $i/30)"
+    sleep 2
+done
+
+if [ -z "$INSTANCE_ID" ]; then
+    echo "ERROR: Failed to get instance ID from IMDS"
+    exit 1
+fi
 
 echo "=== Multi-Runner Setup for $GPU_TYPE ==="
 echo "Instance ID: $INSTANCE_ID"
@@ -31,6 +49,30 @@ echo "Environment: $ENVIRONMENT"
 # Install dependencies
 apt-get update
 apt-get install -y jq curl unzip
+
+# Ensure ubuntu user has docker access
+usermod -aG docker "$RUN_AS" 2>/dev/null || true
+
+# Move Docker storage to NVMe (root disk is only 40GB)
+echo "Moving Docker storage to NVMe..."
+systemctl stop docker containerd 2>/dev/null || true
+mkdir -p /opt/dlami/nvme/docker /opt/dlami/nvme/containerd
+if [ -d /var/lib/docker ] && [ ! -L /var/lib/docker ]; then
+    rsync -a /var/lib/docker/ /opt/dlami/nvme/docker/ 2>/dev/null || true
+    rm -rf /var/lib/docker
+fi
+if [ -d /var/lib/containerd ] && [ ! -L /var/lib/containerd ]; then
+    rsync -a /var/lib/containerd/ /opt/dlami/nvme/containerd/ 2>/dev/null || true
+    rm -rf /var/lib/containerd
+fi
+ln -sf /opt/dlami/nvme/docker /var/lib/docker
+ln -sf /opt/dlami/nvme/containerd /var/lib/containerd
+systemctl start containerd docker
+
+# Pre-pull CI images to avoid rate limits (images cached on NVMe)
+echo "Pre-pulling FlashInfer CI images..."
+docker pull flashinfer/flashinfer-ci-cu129:latest || true
+docker pull flashinfer/flashinfer-ci-cu130:latest || true
 
 # Get GitHub App credentials from SSM
 echo "Fetching GitHub App credentials..."
@@ -115,9 +157,11 @@ setup_runner() {
         curl -sL https://github.com/actions/runner/releases/download/v2.321.0/actions-runner-linux-x64-2.321.0.tar.gz | tar xz
     fi
 
-    # Configure runner (allow running as root for CI environment)
-    export RUNNER_ALLOW_RUNASROOT=1
-    ./config.sh --unattended \
+    # Set ownership to run_as user before configuring
+    chown -R "$RUN_AS:$RUN_AS" "$runner_dir"
+
+    # Configure runner as non-root user (required by GitHub runner)
+    sudo -u "$RUN_AS" ./config.sh --unattended \
         --url "https://github.com/$ORG_NAME" \
         --token "$registration_token" \
         --name "$runner_name" \
@@ -130,18 +174,21 @@ setup_runner() {
     cat > /etc/systemd/system/actions-runner-$runner_id.service << EOFSERVICE
 [Unit]
 Description=GitHub Actions Runner $runner_id
-After=network.target
+After=network.target docker.service
+Wants=docker.service
 
 [Service]
 Type=simple
-User=root
+User=$RUN_AS
 WorkingDirectory=$runner_dir
-Environment="RUNNER_ALLOW_RUNASROOT=1"
 Environment="CUDA_VISIBLE_DEVICES=$cuda_devices"
 Environment="NVIDIA_VISIBLE_DEVICES=$cuda_devices"
 ExecStart=$runner_dir/run.sh
 Restart=always
 RestartSec=10
+KillMode=process
+KillSignal=SIGTERM
+TimeoutStopSec=5min
 
 [Install]
 WantedBy=multi-user.target
