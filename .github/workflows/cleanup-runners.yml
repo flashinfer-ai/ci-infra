@@ -1,0 +1,98 @@
+name: Cleanup Offline Runners
+
+on:
+  schedule:
+    - cron: '0 8 * * *'  # Daily at 8:00 UTC
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (list only, no delete)'
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    name: Remove Offline Runners
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Generate GitHub App Token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_KEY }}
+          owner: flashinfer-ai
+
+      - name: Cleanup Offline Runners
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            // On schedule: always delete. On manual dispatch: respect dry_run input (default true)
+            const isScheduled = '${{ github.event_name }}' === 'schedule';
+            const dryRun = isScheduled ? false : '${{ github.event.inputs.dry_run }}' !== 'false';
+            const org = 'flashinfer-ai';
+
+            console.log(`Mode: ${dryRun ? 'DRY RUN' : 'LIVE'}`);
+            console.log('Fetching runners...');
+
+            // Get all runners (paginated)
+            let allRunners = [];
+            let page = 1;
+            while (true) {
+              const response = await github.rest.actions.listSelfHostedRunnersForOrg({
+                org: org,
+                per_page: 100,
+                page: page
+              });
+
+              allRunners = allRunners.concat(response.data.runners);
+
+              if (response.data.runners.length < 100) break;
+              page++;
+            }
+
+            console.log(`Total runners: ${allRunners.length}`);
+
+            // Find offline runners
+            const offlineRunners = allRunners.filter(r => r.status === 'offline');
+            console.log(`Offline runners: ${offlineRunners.length}`);
+
+            if (offlineRunners.length === 0) {
+              console.log('No offline runners to clean up.');
+              return;
+            }
+
+            // Delete offline runners
+            let deleted = 0;
+            let failed = 0;
+
+            for (const runner of offlineRunners) {
+              console.log(`${dryRun ? '[DRY RUN] Would delete' : 'Deleting'}: ${runner.name} (id: ${runner.id})`);
+
+              if (!dryRun) {
+                try {
+                  await github.rest.actions.deleteSelfHostedRunnerFromOrg({
+                    org: org,
+                    runner_id: runner.id
+                  });
+                  deleted++;
+                } catch (error) {
+                  console.log(`  Failed to delete ${runner.name}: ${error.message}`);
+                  failed++;
+                }
+              }
+            }
+
+            console.log('');
+            console.log('Summary:');
+            console.log(`  Total offline: ${offlineRunners.length}`);
+            if (!dryRun) {
+              console.log(`  Deleted: ${deleted}`);
+              console.log(`  Failed: ${failed}`);
+            }
