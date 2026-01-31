@@ -64,17 +64,17 @@ runner_config:
   runner_os: linux
   runner_architecture: x64
   runner_name_prefix: flashinfer-gpu-p5-
-  
+
   runner_extra_labels:
     - gpu
     - nvidia
     - h100
     - sm90
     - hopper
-  
+
   instance_types:
     - p5.48xlarge
-  
+
   # ... rest of config similar to gpu-g5.yaml
 ```
 

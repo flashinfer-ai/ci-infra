@@ -9,7 +9,7 @@ IMPORTANT: Automatic CB purchase has been DISABLED.
 CBs must be purchased manually via AWS Console to prevent accidental duplicate purchases.
 
 Manual purchase instructions:
-1. Go to AWS Console → EC2 → Capacity Reservations → Create Capacity Block
+1. Go to AWS Console > EC2 > Capacity Reservations > Create Capacity Block
 2. Select instance type (p6-b200.48xlarge for B200, p5.48xlarge for H100)
 3. Select duration and AZ
 4. Purchase the CB manually

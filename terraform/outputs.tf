@@ -16,10 +16,10 @@ output "runners_map" {
 
 output "vpc_id" {
   description = "VPC ID where runners are deployed"
-  value       = module.base.vpc.vpc_id
+  value       = module.vpc.vpc_id
 }
 
 output "private_subnet_ids" {
   description = "Private subnet IDs where runners are launched"
-  value       = module.base.vpc.private_subnets
+  value       = module.vpc.private_subnets
 }

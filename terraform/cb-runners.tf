@@ -1,8 +1,8 @@
 # Capacity Block Runners Infrastructure
-# 
+#
 # This file sets up custom infrastructure for Capacity Block (CB) based runners
 # (p5.48xlarge for H100, p6-b200.48xlarge for B200).
-# 
+#
 # This is separate from the upstream terraform-aws-github-runner module to avoid
 # patching upstream code. The upstream module handles spot/on-demand runners,
 # while this handles CB runners.
@@ -11,12 +11,16 @@ locals {
   cb_runners = {
     "gpu-p6-cb" = {
       instance_type = "p6-b200.48xlarge"
+      gpu_type      = "b200"
       labels        = ["sm100", "b200", "blackwell"]
+      labels_base   = "self-hosted,linux,x64,gpu,nvidia,b200,blackwell,capacity-block"
       description   = "B200 GPU (Blackwell)"
     }
     "gpu-p5-cb" = {
       instance_type = "p5.48xlarge"
+      gpu_type      = "h100"
       labels        = ["sm90", "h100", "hopper"]
+      labels_base   = "self-hosted,linux,x64,gpu,nvidia,h100,hopper,capacity-block"
       description   = "H100 GPU (Hopper)"
     }
   }
@@ -65,7 +69,7 @@ resource "aws_cloudwatch_event_rule" "cb_workflow_job" {
 
   name           = "${local.environment}-${each.key}-workflow-job"
   description    = "Route ${each.value.description} jobs to CB queue"
-  event_bus_name = module.runners.eventbridge.event_bus.name
+  event_bus_name = module.runners.webhook.eventbridge.event_bus.name
 
   event_pattern = jsonencode({
     source      = ["github-runners.${local.environment}"]
@@ -87,7 +91,7 @@ resource "aws_cloudwatch_event_target" "cb_sqs" {
   for_each = local.cb_runners
 
   rule           = aws_cloudwatch_event_rule.cb_workflow_job[each.key].name
-  event_bus_name = module.runners.eventbridge.event_bus.name
+  event_bus_name = module.runners.webhook.eventbridge.event_bus.name
   target_id      = "${each.key}-sqs"
   arn            = aws_sqs_queue.cb_builds[each.key].arn
 
@@ -157,7 +161,7 @@ resource "aws_lambda_function" "cb_scale_up" {
 
   environment {
     variables = {
-      AWS_REGION           = var.aws_region
+      REGION               = var.aws_region
       ENVIRONMENT          = local.environment
       LAUNCH_TEMPLATE_NAME = aws_launch_template.cb_runner[each.key].name
       SUBNET_IDS           = join(",", module.vpc.private_subnets)
@@ -303,8 +307,19 @@ resource "aws_launch_template" "cb_runner" {
     instance_metadata_tags      = "enabled"
   }
 
-  # User data - multi-GPU runner setup
-  user_data = base64encode(file("${path.module}/templates/user-data-multi-gpu.sh"))
+  # User data - multi-runner setup (1x4-GPU + 4x1-GPU per node)
+  user_data = base64encode(templatefile("${path.module}/templates/user-data-multi-runner.sh", {
+    region              = var.aws_region
+    environment         = local.environment
+    instance_type       = each.value.instance_type
+    gpu_type            = each.value.gpu_type
+    ssm_config_path     = "/github-action-runners/${local.environment}/${each.key}/runners/config"
+    github_app_id_param = "/github-action-runners/${local.environment}/app/github_app_id"
+    github_app_key_param = "/github-action-runners/${local.environment}/app/github_app_key_base64"
+    org_name            = "flashinfer-ai"
+    runner_group        = "Default"
+    labels_base         = each.value.labels_base
+  }))
 
   tag_specifications {
     resource_type = "instance"
@@ -380,6 +395,7 @@ resource "aws_iam_role_policy" "cb_runner" {
     Version = "2012-10-17"
     Statement = [
       {
+        Sid    = "SSMParameters"
         Effect = "Allow"
         Action = [
           "ssm:GetParameter",
@@ -389,6 +405,7 @@ resource "aws_iam_role_policy" "cb_runner" {
         Resource = "arn:aws:ssm:${var.aws_region}:*:parameter/github-action-runners/${local.environment}/*"
       },
       {
+        Sid    = "SSMSessionManager"
         Effect = "Allow"
         Action = [
           "ssm:DescribeInstanceInformation",
@@ -399,6 +416,7 @@ resource "aws_iam_role_policy" "cb_runner" {
         Resource = "*"
       },
       {
+        Sid    = "CloudWatchLogs"
         Effect = "Allow"
         Action = [
           "logs:CreateLogStream",
@@ -407,11 +425,25 @@ resource "aws_iam_role_policy" "cb_runner" {
         Resource = "arn:aws:logs:*:*:*"
       },
       {
+        Sid    = "S3RunnerBinaries"
         Effect = "Allow"
         Action = [
           "s3:GetObject"
         ]
         Resource = "arn:aws:s3:::${local.environment}-runner-binaries/*"
+      },
+      {
+        Sid    = "EC2TagSelf"
+        Effect = "Allow"
+        Action = [
+          "ec2:CreateTags"
+        ]
+        Resource = "arn:aws:ec2:${var.aws_region}:*:instance/*"
+        Condition = {
+          StringEquals = {
+            "ec2:ResourceTag/ManagedBy" = "Terraform"
+          }
+        }
       }
     ]
   })
@@ -465,7 +497,7 @@ resource "aws_lambda_function" "cb_manager" {
 
   environment {
     variables = {
-      AWS_REGION  = var.aws_region
+      REGION      = var.aws_region
       ENVIRONMENT = local.environment
     }
   }

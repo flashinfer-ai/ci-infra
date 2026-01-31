@@ -26,7 +26,8 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 # Environment variables
-AWS_REGION = os.environ.get('AWS_REGION', 'us-west-2')
+# Note: AWS_REGION is a reserved Lambda variable, so we use REGION instead
+REGION = os.environ.get('REGION', os.environ.get('AWS_REGION', 'us-west-2'))
 ENVIRONMENT = os.environ.get('ENVIRONMENT', 'flashinfer')
 LAUNCH_TEMPLATE_NAME = os.environ.get('LAUNCH_TEMPLATE_NAME')
 SUBNET_IDS = os.environ.get('SUBNET_IDS', '').split(',')
@@ -35,7 +36,7 @@ RUNNER_NAME_PREFIX = os.environ.get('RUNNER_NAME_PREFIX', 'flashinfer-cb-')
 SSM_CONFIG_PATH = os.environ.get('SSM_CONFIG_PATH')
 
 # AWS clients
-ec2_client = boto3.client('ec2', region_name=AWS_REGION)
+ec2_client = boto3.client('ec2', region_name=REGION)
 
 
 class ScaleError(Exception):
@@ -46,7 +47,7 @@ class ScaleError(Exception):
 def find_active_capacity_block(instance_type: str) -> Optional[Dict[str, Any]]:
     """
     Find an active Capacity Block reservation for the given instance type.
-    
+
     Returns:
         Dict with 'id' and 'az' if found, None otherwise
     """
@@ -57,20 +58,20 @@ def find_active_capacity_block(instance_type: str) -> Optional[Dict[str, Any]]:
                 {'Name': 'instance-type', 'Values': [instance_type]},
             ]
         )
-        
+
         # Find a capacity block with available capacity
         for cr in response.get('CapacityReservations', []):
-            if (cr.get('ReservationType') == 'capacity-block' and 
+            if (cr.get('ReservationType') == 'capacity-block' and
                 cr.get('AvailableInstanceCount', 0) > 0):
                 cb_id = cr['CapacityReservationId']
                 az = cr['AvailabilityZone']
                 available = cr['AvailableInstanceCount']
                 logger.info(f"Found active CB: {cb_id} in {az} with {available} available")
                 return {'id': cb_id, 'az': az, 'available': available}
-        
+
         logger.warning(f"No active Capacity Block found for {instance_type}")
         return None
-        
+
     except ClientError as e:
         logger.error(f"Error describing capacity reservations: {e}")
         raise
@@ -83,16 +84,16 @@ def find_subnet_in_az(az: str) -> Optional[str]:
             SubnetIds=SUBNET_IDS,
             Filters=[{'Name': 'availability-zone', 'Values': [az]}]
         )
-        
+
         subnets = response.get('Subnets', [])
         if subnets:
             subnet_id = subnets[0]['SubnetId']
             logger.info(f"Found subnet {subnet_id} in {az}")
             return subnet_id
-        
+
         logger.warning(f"No subnet found in {az} from configured subnets: {SUBNET_IDS}")
         return None
-        
+
     except ClientError as e:
         logger.error(f"Error describing subnets: {e}")
         raise
@@ -105,7 +106,7 @@ def launch_instance_into_cb(
 ) -> str:
     """
     Launch an EC2 instance into the Capacity Block.
-    
+
     Returns:
         Instance ID of the launched instance
     """
@@ -120,13 +121,13 @@ def launch_instance_into_cb(
         {'Key': 'Project', 'Value': 'FlashInfer'},
         {'Key': 'ManagedBy', 'Value': 'Terraform'},
     ]
-    
+
     # Add job-specific tags if available
     if job_info.get('repository'):
         tags.append({'Key': 'ghr:repository', 'Value': job_info['repository']})
     if job_info.get('workflow_job_id'):
         tags.append({'Key': 'ghr:workflow_job_id', 'Value': str(job_info['workflow_job_id'])})
-    
+
     try:
         response = ec2_client.run_instances(
             LaunchTemplate={
@@ -156,15 +157,15 @@ def launch_instance_into_cb(
                 }
             ]
         )
-        
+
         instance_id = response['Instances'][0]['InstanceId']
         logger.info(f"Successfully launched instance {instance_id} into CB {cb_info['id']}")
         return instance_id
-        
+
     except ClientError as e:
         error_code = e.response.get('Error', {}).get('Code', '')
         logger.error(f"Error launching instance: {e}")
-        
+
         # These errors should trigger retry
         retry_errors = [
             'InsufficientInstanceCapacity',
@@ -194,11 +195,11 @@ def parse_sqs_message(record: Dict[str, Any]) -> Dict[str, Any]:
 def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
     Lambda handler for CB scale-up.
-    
+
     Receives SQS events and launches instances into active Capacity Blocks.
     """
     logger.info(f"Received event: {json.dumps(event)}")
-    
+
     # Validate required environment variables
     if not LAUNCH_TEMPLATE_NAME:
         raise ValueError("LAUNCH_TEMPLATE_NAME environment variable is required")
@@ -206,42 +207,42 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         raise ValueError("INSTANCE_TYPE environment variable is required")
     if not SUBNET_IDS or SUBNET_IDS == ['']:
         raise ValueError("SUBNET_IDS environment variable is required")
-    
+
     results = {
         'successful': [],
         'failed': []
     }
-    
+
     records = event.get('Records', [])
     logger.info(f"Processing {len(records)} SQS record(s)")
-    
+
     for record in records:
         message_id = record.get('messageId', 'unknown')
-        
+
         try:
             job_info = parse_sqs_message(record)
             logger.info(f"Processing job: {job_info}")
-            
+
             # Step 1: Find active Capacity Block
             cb_info = find_active_capacity_block(INSTANCE_TYPE)
             if not cb_info:
                 # No CB available - raise ScaleError to trigger SQS retry
                 raise ScaleError(f"No active Capacity Block for {INSTANCE_TYPE}")
-            
+
             # Step 2: Find subnet in CB's availability zone
             subnet_id = find_subnet_in_az(cb_info['az'])
             if not subnet_id:
                 raise ScaleError(f"No subnet in {cb_info['az']}")
-            
+
             # Step 3: Launch instance into CB
             instance_id = launch_instance_into_cb(cb_info, subnet_id, job_info)
-            
+
             results['successful'].append({
                 'message_id': message_id,
                 'instance_id': instance_id,
                 'capacity_block_id': cb_info['id']
             })
-            
+
         except ScaleError as e:
             # ScaleError should trigger SQS retry via partial batch failure
             logger.warning(f"Scale error for message {message_id}: {e}")
@@ -250,7 +251,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 'error': str(e),
                 'retry': True
             })
-            
+
         except Exception as e:
             # Other errors - log but don't retry
             logger.error(f"Error processing message {message_id}: {e}")
@@ -259,20 +260,20 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 'error': str(e),
                 'retry': False
             })
-    
+
     # Return partial batch failure response for SQS
     # This tells SQS which messages to retry
     batch_item_failures = [
-        {'itemIdentifier': f['message_id']} 
-        for f in results['failed'] 
+        {'itemIdentifier': f['message_id']}
+        for f in results['failed']
         if f.get('retry', False)
     ]
-    
+
     response = {
         'statusCode': 200,
         'body': json.dumps(results),
         'batchItemFailures': batch_item_failures
     }
-    
+
     logger.info(f"Response: {json.dumps(response)}")
     return response

@@ -22,9 +22,15 @@ source scripts/setup-env.sh
 # Deploy
 cd terraform
 terraform init
-terraform plan
-terraform apply
+../scripts/safe-apply.sh  # Recommended: blocks if webhook URL would change
 ```
+
+## Safety Scripts
+
+- **`scripts/safe-apply.sh`** - Interactive apply that blocks if webhook URL would change
+- **`scripts/check-webhook-safety.sh`** - CI-friendly check (exit code 2 = webhook-breaking changes)
+
+These scripts prevent accidental recreation of API Gateway, which would change the webhook URL and require updating the GitHub App configuration.
 
 ## License
 

@@ -4,6 +4,11 @@
 *.tfstate
 *.tfstate.*
 *.tfplan
+tfplan.json
+
+# Lambda zip files (downloaded/generated during deployment)
+lambdas-download/*.zip
+lambdas/**/*.zip
 
 # Secrets - NEVER commit these
 terraform.tfvars

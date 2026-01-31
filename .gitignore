@@ -1,0 +1,9 @@
+# Secrets
+setup-env.sh
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
