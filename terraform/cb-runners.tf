@@ -57,11 +57,13 @@ resource "aws_cloudwatch_event_rule" "cb_workflow_job" {
   event_bus_name = module.runners.webhook.eventbridge.event_bus.name
 
   event_pattern = jsonencode({
-    source      = ["github-runners.${local.environment}"]
+    source      = ["github"]
     detail-type = ["workflow_job"]
     detail = {
-      event = ["queued"]
-      labels = [for label in each.value.labels : { prefix = label }]
+      action = ["queued"]
+      workflow_job = {
+        labels = [{ prefix = each.value.gpu_type }]  # Match h100 or b200
+      }
     }
   })
 

@@ -104,7 +104,7 @@ def launch_instance_into_cb(
         response = ec2_client.run_instances(
             LaunchTemplate={
                 'LaunchTemplateName': LAUNCH_TEMPLATE_NAME,
-                'Version': '$Default'
+                'Version': '$Latest'
             },
             InstanceType=INSTANCE_TYPE,
             SubnetId=subnet_id,
