@@ -1,4 +1,5 @@
 name: Deploy Self-Hosted GitHub Runners
+# Deploys CI infrastructure for FlashInfer self-hosted runners on AWS
 
 on:
   push:
