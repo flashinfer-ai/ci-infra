@@ -1,17 +1,48 @@
 # FlashInfer CI Infrastructure
 
-Terraform configuration for FlashInfer's CI infrastructure using GitHub Actions self-hosted runners on AWS.
+Infrastructure-as-code for [FlashInfer](https://github.com/flashinfer-ai/flashinfer)'s public CI system. This repository manages:
+
+- **AWS Infrastructure**: VPC, subnets, security groups, IAM roles
+- **Self-Hosted Runners**: GitHub Actions runners on EC2 (spot, on-demand, capacity blocks)
+- **Automation**: Lambda functions for runner scaling, cleanup, and management
+- **CI/CD**: Automated deployment via GitHub Actions with environment protection
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  GitHub (flashinfer-ai/flashinfer)                              │
+│    └── Webhook ──► API Gateway ──► Lambda (scale-up)            │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  AWS (us-west-2)                                                │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │  VPC (10.0.0.0/16)                                      │    │
+│  │  ├── Public Subnets  ──► Runners (spot/on-demand)       │    │
+│  │  └── Public Subnets  ──► CB Runners (H100/B200)         │    │
+│  └─────────────────────────────────────────────────────────┘    │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │  Lambda Functions                                       │    │
+│  │  ├── scale-up        (launch runners on job queue)      │    │
+│  │  ├── scale-down      (terminate idle runners)           │    │
+│  │  ├── cb-scale-up     (launch CB runners)                │    │
+│  │  └── cb-manager      (check CB status)                  │    │
+│  └─────────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────┘
+```
 
 ## Quick Start
 
 ```bash
 # Clone with submodules
-git clone --recursive https://github.com/flashinfer-ai/flashinfer-ci.git
+git clone --recursive https://github.com/flashinfer-ai/ci-infra.git
 cd ci-infra
 
 # Set up environment
 cp scripts/setup-env.sh.example scripts/setup-env.sh
-# Edit setup-env.sh with your values
+# Edit setup-env.sh with your AWS credentials and GitHub App secrets
 source scripts/setup-env.sh
 
 # Deploy
@@ -23,7 +54,9 @@ terraform apply
 
 ## Available Runners
 
-**Spot Runners**:
+All runners are registered at the organization level and available to all repositories in [flashinfer-ai](https://github.com/flashinfer-ai).
+
+### Spot Runners (Cost-Optimized)
 
 | Type | GPU | `runs-on` Labels | Instance Types |
 |------|-----|------------------|----------------|
@@ -32,7 +65,7 @@ terraform apply
 | GPU T4 | SM75 | `[self-hosted, linux, x64, gpu, sm75, spot]` | g4dn (2xlarge, 4xlarge, 8xlarge) |
 | GPU A10G | SM86 | `[self-hosted, linux, x64, gpu, sm86, spot]` | g5 (2xlarge, 4xlarge, 8xlarge) |
 
-**On-Demand Runners**:
+### On-Demand Runners (Reliable)
 
 | Type | GPU | `runs-on` Labels | Instance Types |
 |------|-----|------------------|----------------|
