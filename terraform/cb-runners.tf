@@ -146,7 +146,7 @@ resource "aws_lambda_function" "cb_scale_up" {
       REGION               = var.aws_region
       ENVIRONMENT          = local.environment
       LAUNCH_TEMPLATE_NAME = aws_launch_template.cb_runner[each.key].name
-      SUBNET_IDS           = join(",", module.vpc.private_subnets)
+      SUBNET_IDS           = join(",", module.vpc.public_subnets)  # Public IPs for separate Docker Hub rate limits
       INSTANCE_TYPE        = each.value.instance_type
       RUNNER_NAME_PREFIX   = "${local.environment}-${each.key}-"
       SSM_CONFIG_PATH      = "/github-action-runners/${local.environment}/${each.key}/runners/config"

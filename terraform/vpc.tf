@@ -11,7 +11,7 @@ module "vpc" {
 
   enable_dns_hostnames    = true
   enable_nat_gateway      = true
-  map_public_ip_on_launch = false
+  map_public_ip_on_launch = true   # Give each runner its own public IP for Docker Hub rate limits
   single_nat_gateway      = true
 
   tags = {

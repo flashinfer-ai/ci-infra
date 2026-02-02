@@ -16,7 +16,7 @@ locals {
         runner_config = merge(
           v.runner_config,
           {
-            subnet_ids = module.vpc.private_subnets
+            subnet_ids = module.vpc.public_subnets
             vpc_id     = module.vpc.vpc_id
           }
         )
@@ -32,7 +32,7 @@ module "runners" {
 
   aws_region = local.aws_region
   vpc_id     = module.vpc.vpc_id
-  subnet_ids = module.vpc.private_subnets
+  subnet_ids = module.vpc.public_subnets
   prefix     = local.environment
 
   github_app = {

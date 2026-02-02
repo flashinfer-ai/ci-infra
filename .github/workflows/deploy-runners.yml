@@ -1,15 +1,15 @@
-name: Apply Terraform
+name: Deploy Self-Hosted GitHub Runners
 
 on:
   push:
     branches: [main]
     paths:
       - 'terraform/**'
-      - '.github/workflows/apply-terraform.yml'
+      - '.github/workflows/deploy-runners.yml'
   pull_request:
     paths:
       - 'terraform/**'
-      - '.github/workflows/apply-terraform.yml'
+      - '.github/workflows/deploy-runners.yml'
   workflow_dispatch:
     inputs:
       apply:
