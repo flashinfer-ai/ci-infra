@@ -74,16 +74,23 @@ All runners are registered at the organization level and available to all reposi
 | GPU T4 | SM75 | `[self-hosted, linux, x64, gpu, sm75, on-demand]` | g4dn (2xlarge, 4xlarge, 8xlarge) |
 | GPU A10G | SM86 | `[self-hosted, linux, x64, gpu, sm86, on-demand]` | g5 (2xlarge, 4xlarge, 8xlarge) |
 
-**Capacity Block Runners**:
+**Multi-GPU Spot Runners** (5 runners per instance: 1x 4-GPU + 4x 1-GPU):
 
-| Type | GPU | `runs-on` Labels | Instance |
-|------|-----|------------------|----------|
-| H100 1-GPU | SM90 | `[self-hosted, linux, x64, gpu, h100, 1gpu]` | p5.48xlarge |
-| H100 4-GPU | SM90 | `[self-hosted, linux, x64, gpu, h100, 4gpu]` | p5.48xlarge |
-| B200 1-GPU | SM100 | `[self-hosted, linux, x64, gpu, b200, 1gpu]` | p6-b200.48xlarge |
-| B200 4-GPU | SM100 | `[self-hosted, linux, x64, gpu, b200, 4gpu]` | p6-b200.48xlarge |
+| Type | GPU | `runs-on` Labels | Instance | Pricing |
+|------|-----|------------------|----------|---------|
+| A100 1-GPU | SM80 | `[self-hosted, linux, x64, gpu, a100, 1gpu]` | p4d.24xlarge | Spot + on-demand fallback |
+| A100 4-GPU | SM80 | `[self-hosted, linux, x64, gpu, a100, 4gpu]` | p4d.24xlarge | Spot + on-demand fallback |
 
-Each p5/p6 node runs 5 runners: 1x 4-GPU runner + 4x 1-GPU runners.
+**Capacity Block Runners** (5 runners per instance: 1x 4-GPU + 4x 1-GPU):
+
+| Type | GPU | `runs-on` Labels | Instance | Pricing |
+|------|-----|------------------|----------|---------|
+| H100 1-GPU | SM90 | `[self-hosted, linux, x64, gpu, h100, 1gpu]` | p5.48xlarge | Capacity Block |
+| H100 4-GPU | SM90 | `[self-hosted, linux, x64, gpu, h100, 4gpu]` | p5.48xlarge | Capacity Block |
+| B200 1-GPU | SM100 | `[self-hosted, linux, x64, gpu, b200, 1gpu]` | p6-b200.48xlarge | Capacity Block |
+| B200 4-GPU | SM100 | `[self-hosted, linux, x64, gpu, b200, 4gpu]` | p6-b200.48xlarge | Capacity Block |
+
+All multi-GPU nodes run 5 runners: 1x 4-GPU runner (GPUs 0-3) + 4x 1-GPU runners (GPUs 4-7).
 
 See `terraform/templates/runner-configs/*.yaml` for the full list of instance types.
 
