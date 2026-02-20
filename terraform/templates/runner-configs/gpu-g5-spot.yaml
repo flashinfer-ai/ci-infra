@@ -59,6 +59,7 @@ runner_config:
     - InsufficientInstanceCapacity
     - SpotMaxPriceTooLow
     - MaxSpotInstanceCountExceeded
+    - UnfulfillableCapacity
 
   runners_maximum_count: 50
   delay_webhook_event: 30

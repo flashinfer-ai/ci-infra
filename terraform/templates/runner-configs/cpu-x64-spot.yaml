@@ -90,6 +90,9 @@ runner_config:
   instance_allocation_strategy: capacity-optimized
   enable_on_demand_failover_for_errors:
     - InsufficientInstanceCapacity
+    - SpotMaxPriceTooLow
+    - MaxSpotInstanceCountExceeded
+    - UnfulfillableCapacity
 
   # Create service-linked role (only needed ONCE per AWS account)
   create_service_linked_role_spot: true

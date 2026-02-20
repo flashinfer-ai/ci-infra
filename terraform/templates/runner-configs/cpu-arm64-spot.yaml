@@ -84,6 +84,7 @@ runner_config:
     - InsufficientInstanceCapacity
     - SpotMaxPriceTooLow
     - MaxSpotInstanceCountExceeded
+    - UnfulfillableCapacity
 
   # NOT setting create_service_linked_role_spot (already created by cpu-x64)
 
