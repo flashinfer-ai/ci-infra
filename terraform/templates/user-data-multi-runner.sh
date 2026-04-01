@@ -1,8 +1,8 @@
 #!/bin/bash -e
 # Multi-Runner User Data Script for CB Instances (H100/B200)
 # Launches multiple GitHub runners on a single 8-GPU node:
-#   - 1x 4-GPU runner (GPUs 0-3)
-#   - 4x 1-GPU runners (GPUs 4,5,6,7)
+#   - 3x 2-GPU runners (GPUs 0-1, 2-3, 4-5)
+#   - 2x 1-GPU runners (GPUs 6, 7)
 
 exec > >(tee /var/log/user-data.log | logger -t user-data -s 2>/dev/console) 2>&1
 
@@ -214,11 +214,11 @@ fi
 # Define runner configurations
 # Format: runner_id:name_suffix:labels:cuda_devices
 declare -a RUNNERS=(
-    "1:4gpu:$LABELS_BASE,4gpu,multi-gpu:0,1,2,3"
-    "2:1gpu-a:$LABELS_BASE,1gpu:4"
-    "3:1gpu-b:$LABELS_BASE,1gpu:5"
-    "4:1gpu-c:$LABELS_BASE,1gpu:6"
-    "5:1gpu-d:$LABELS_BASE,1gpu:7"
+    "1:2gpu-a:$LABELS_BASE,2gpu,multi-gpu:0,1"
+    "2:2gpu-b:$LABELS_BASE,2gpu,multi-gpu:2,3"
+    "3:2gpu-c:$LABELS_BASE,2gpu,multi-gpu:4,5"
+    "4:1gpu-a:$LABELS_BASE,1gpu:6"
+    "5:1gpu-b:$LABELS_BASE,1gpu:7"
 )
 
 echo "Setting up $${#RUNNERS[@]} runners..."
