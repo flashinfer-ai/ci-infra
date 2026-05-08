@@ -1,5 +1,5 @@
 # A100 GPU runners (p4d.24xlarge) - Spot with on-demand fallback
-# 5 runners per instance: 3x 2-GPU (GPUs 0-1, 2-3, 4-5) + 2x 1-GPU (GPUs 6, 7)
+# 4 runners per instance: 4x 2-GPU (GPUs 0-1, 2-3, 4-5, 6-7)
 # Uses same user-data-multi-runner.sh as p5/p6 CB runners
 
 locals {
