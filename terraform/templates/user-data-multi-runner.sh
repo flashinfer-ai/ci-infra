@@ -1,8 +1,7 @@
 #!/bin/bash -e
 # Multi-Runner User Data Script for CB Instances (H100/B200)
 # Launches multiple GitHub runners on a single 8-GPU node:
-#   - 3x 2-GPU runners (GPUs 0-1, 2-3, 4-5)
-#   - 2x 1-GPU runners (GPUs 6, 7)
+#   - 4x 2-GPU runners (GPUs 0-1, 2-3, 4-5, 6-7)
 
 exec > >(tee /var/log/user-data.log | logger -t user-data -s 2>/dev/console) 2>&1
 
@@ -217,8 +216,7 @@ declare -a RUNNERS=(
     "1:2gpu-a:$LABELS_BASE,2gpu,multi-gpu:0,1"
     "2:2gpu-b:$LABELS_BASE,2gpu,multi-gpu:2,3"
     "3:2gpu-c:$LABELS_BASE,2gpu,multi-gpu:4,5"
-    "4:1gpu-a:$LABELS_BASE,1gpu:6"
-    "5:1gpu-b:$LABELS_BASE,1gpu:7"
+    "4:2gpu-d:$LABELS_BASE,2gpu,multi-gpu:6,7"
 )
 
 echo "Setting up $${#RUNNERS[@]} runners..."
@@ -246,7 +244,7 @@ systemctl list-units --type=service | grep actions-runner
 
 # Tag instance with runner info
 aws ec2 create-tags --region "$REGION" --resources "$INSTANCE_ID" --tags \
-    Key=ghr:runners,Value="5" \
+    Key=ghr:runners,Value="4" \
     Key=ghr:gpu_type,Value="$GPU_TYPE"
 
 echo "Setup finished at $(date)"
