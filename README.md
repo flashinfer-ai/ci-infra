@@ -91,6 +91,29 @@ All multi-GPU nodes run 4 runners: 4x 2-GPU runners (GPUs 0-1, 2-3, 4-5, 6-7).
 
 See `terraform/templates/runner-configs/*.yaml` for the full list of instance types.
 
+## Containerd memlock limit
+
+Use the following steps when a runner needs a higher `containerd` memlock limit.
+The expected change is `8388608` to `infinity`, with `containerd` remaining
+`active`.
+
+```bash
+# 1. Check the current value. Confirm it is low, for example 8388608 = 8 MiB.
+systemctl show containerd -p LimitMEMLOCK --value
+
+# 2. Write a systemd drop-in for containerd and raise memlock to unlimited.
+sudo mkdir -p /etc/systemd/system/containerd.service.d
+printf '[Service]\nLimitMEMLOCK=infinity\n' | sudo tee /etc/systemd/system/containerd.service.d/memlock.conf >/dev/null
+
+# 3. Reload systemd and restart containerd only. Do not reboot the machine.
+sudo systemctl daemon-reload
+sudo systemctl restart containerd
+
+# 4. Verify.
+systemctl is-active containerd                    # -> active
+systemctl show containerd -p LimitMEMLOCK --value # -> infinity
+```
+
 ## License
 
 Apache License 2.0 - see [LICENSE](LICENSE) file for details.
