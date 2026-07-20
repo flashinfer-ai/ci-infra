@@ -1,9 +1,19 @@
-"""CB Scale-Up Lambda - launches instances into active Capacity Blocks."""
+"""CB Scale-Up Lambda - launches instances into active Capacity Blocks.
+
+Supports one or more launch targets (regions), tried in order:
+  1. The primary target from REGION / LAUNCH_TEMPLATE_NAME / SUBNET_IDS env vars
+     (unchanged; backward compatible with the single-region setup).
+  2. Optional extra targets from EXTRA_LAUNCH_TARGETS, a JSON list of
+     {"region", "launch_template", "subnet_ids": [...]} objects.
+
+For each queued job, it picks the first target that has an active Capacity Block
+with available capacity and a subnet in the CB's AZ, and launches one instance
+there. If no target can be satisfied, it raises ScaleError to trigger an SQS retry.
+"""
 
 import json
 import logging
 import os
-import time
 from typing import Optional, Dict, Any, List
 
 import boto3
@@ -15,12 +25,19 @@ logger.setLevel(logging.INFO)
 REGION = os.environ.get('REGION', os.environ.get('AWS_REGION', 'us-west-2'))
 ENVIRONMENT = os.environ.get('ENVIRONMENT', 'flashinfer')
 LAUNCH_TEMPLATE_NAME = os.environ.get('LAUNCH_TEMPLATE_NAME')
-SUBNET_IDS = os.environ.get('SUBNET_IDS', '').split(',')
-INSTANCE_TYPE = os.environ.get('INSTANCE_TYPE')  # e.g., p6-b200.48xlarge
+SUBNET_IDS = [s for s in os.environ.get('SUBNET_IDS', '').split(',') if s]
+INSTANCE_TYPE = os.environ.get('INSTANCE_TYPE')  # e.g., p5.48xlarge
 RUNNER_NAME_PREFIX = os.environ.get('RUNNER_NAME_PREFIX', 'flashinfer-cb-')
 SSM_CONFIG_PATH = os.environ.get('SSM_CONFIG_PATH')
 
-ec2_client = boto3.client('ec2', region_name=REGION)
+# Cache EC2 clients per region.
+_ec2_clients: Dict[str, Any] = {}
+
+
+def ec2_client(region: str):
+    if region not in _ec2_clients:
+        _ec2_clients[region] = boto3.client('ec2', region_name=region)
+    return _ec2_clients[region]
 
 
 class ScaleError(Exception):
@@ -28,61 +45,83 @@ class ScaleError(Exception):
     pass
 
 
-def find_active_capacity_block(instance_type: str) -> Optional[Dict[str, Any]]:
-    """Find an active CB for the given instance type."""
-    try:
-        response = ec2_client.describe_capacity_reservations(
-            Filters=[
-                {'Name': 'state', 'Values': ['active']},
-                {'Name': 'instance-type', 'Values': [instance_type]},
-            ]
-        )
+def build_launch_targets() -> List[Dict[str, Any]]:
+    """Ordered list of launch targets. Primary (env) first, then EXTRA_LAUNCH_TARGETS."""
+    targets: List[Dict[str, Any]] = [{
+        'region': REGION,
+        'launch_template': LAUNCH_TEMPLATE_NAME,
+        'subnet_ids': SUBNET_IDS,
+    }]
 
-        for cr in response.get('CapacityReservations', []):
-            if (cr.get('ReservationType') == 'capacity-block' and
+    extra = os.environ.get('EXTRA_LAUNCH_TARGETS', '').strip()
+    if extra:
+        try:
+            for t in json.loads(extra):
+                subnet_ids = t.get('subnet_ids', [])
+                if isinstance(subnet_ids, str):
+                    subnet_ids = [s for s in subnet_ids.split(',') if s]
+                targets.append({
+                    'region': t['region'],
+                    'launch_template': t['launch_template'],
+                    'subnet_ids': subnet_ids,
+                })
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            logger.error(f"Invalid EXTRA_LAUNCH_TARGETS, ignoring extras: {e}")
+
+    return targets
+
+
+def find_active_capacity_block(client, instance_type: str) -> Optional[Dict[str, Any]]:
+    """Find an active CB for the given instance type in the client's region."""
+    response = client.describe_capacity_reservations(
+        Filters=[
+            {'Name': 'state', 'Values': ['active']},
+            {'Name': 'instance-type', 'Values': [instance_type]},
+        ]
+    )
+
+    for cr in response.get('CapacityReservations', []):
+        if (cr.get('ReservationType') == 'capacity-block' and
                 cr.get('AvailableInstanceCount', 0) > 0):
-                cb_id = cr['CapacityReservationId']
-                az = cr['AvailabilityZone']
-                available = cr['AvailableInstanceCount']
-                logger.info(f"Found active CB: {cb_id} in {az} with {available} available")
-                return {'id': cb_id, 'az': az, 'available': available}
+            cb_id = cr['CapacityReservationId']
+            az = cr['AvailabilityZone']
+            available = cr['AvailableInstanceCount']
+            logger.info(f"Found active CB: {cb_id} in {az} with {available} available")
+            return {'id': cb_id, 'az': az, 'available': available}
 
-        logger.warning(f"No active Capacity Block found for {instance_type}")
+    logger.info(f"No active Capacity Block for {instance_type} in {client.meta.region_name}")
+    return None
+
+
+def find_subnet_in_az(client, subnet_ids: List[str], az: str) -> Optional[str]:
+    """Find a subnet in the given AZ from the target's configured subnets."""
+    if not subnet_ids:
+        logger.warning("No subnet ids configured for target")
         return None
 
-    except ClientError as e:
-        logger.error(f"Error describing capacity reservations: {e}")
-        raise
+    response = client.describe_subnets(
+        SubnetIds=subnet_ids,
+        Filters=[{'Name': 'availability-zone', 'Values': [az]}]
+    )
 
+    subnets = response.get('Subnets', [])
+    if subnets:
+        subnet_id = subnets[0]['SubnetId']
+        logger.info(f"Found subnet {subnet_id} in {az}")
+        return subnet_id
 
-def find_subnet_in_az(az: str) -> Optional[str]:
-    """Find a subnet in the given availability zone from our configured subnets."""
-    try:
-        response = ec2_client.describe_subnets(
-            SubnetIds=SUBNET_IDS,
-            Filters=[{'Name': 'availability-zone', 'Values': [az]}]
-        )
-
-        subnets = response.get('Subnets', [])
-        if subnets:
-            subnet_id = subnets[0]['SubnetId']
-            logger.info(f"Found subnet {subnet_id} in {az}")
-            return subnet_id
-
-        logger.warning(f"No subnet found in {az} from configured subnets: {SUBNET_IDS}")
-        return None
-
-    except ClientError as e:
-        logger.error(f"Error describing subnets: {e}")
-        raise
+    logger.warning(f"No subnet found in {az} from configured subnets: {subnet_ids}")
+    return None
 
 
 def launch_instance_into_cb(
+    client,
+    launch_template: str,
     cb_info: Dict[str, Any],
     subnet_id: str,
     job_info: Dict[str, Any]
 ) -> str:
-    """Launch an EC2 instance into the Capacity Block."""
+    """Launch an EC2 instance into the Capacity Block. Raises ScaleError on retryable errors."""
     tags = [
         {'Key': 'Name', 'Value': f'{ENVIRONMENT}-cb-action-runner'},
         {'Key': 'ghr:Application', 'Value': 'github-action-runner'},
@@ -101,9 +140,9 @@ def launch_instance_into_cb(
         tags.append({'Key': 'ghr:workflow_job_id', 'Value': str(job_info['workflow_job_id'])})
 
     try:
-        response = ec2_client.run_instances(
+        response = client.run_instances(
             LaunchTemplate={
-                'LaunchTemplateName': LAUNCH_TEMPLATE_NAME,
+                'LaunchTemplateName': launch_template,
                 'Version': '$Latest'
             },
             InstanceType=INSTANCE_TYPE,
@@ -119,24 +158,21 @@ def launch_instance_into_cb(
                 }
             },
             TagSpecifications=[
-                {
-                    'ResourceType': 'instance',
-                    'Tags': tags
-                },
-                {
-                    'ResourceType': 'volume',
-                    'Tags': tags
-                }
+                {'ResourceType': 'instance', 'Tags': tags},
+                {'ResourceType': 'volume', 'Tags': tags}
             ]
         )
 
         instance_id = response['Instances'][0]['InstanceId']
-        logger.info(f"Successfully launched instance {instance_id} into CB {cb_info['id']}")
+        logger.info(
+            f"Launched instance {instance_id} into CB {cb_info['id']} "
+            f"({client.meta.region_name})"
+        )
         return instance_id
 
     except ClientError as e:
         error_code = e.response.get('Error', {}).get('Code', '')
-        logger.error(f"Error launching instance: {e}")
+        logger.error(f"Error launching instance in {client.meta.region_name}: {e}")
 
         retry_errors = [
             'InsufficientInstanceCapacity',
@@ -146,6 +182,42 @@ def launch_instance_into_cb(
         if error_code in retry_errors:
             raise ScaleError(f"Retryable error: {error_code}")
         raise
+
+
+def try_launch_for_job(job_info: Dict[str, Any]) -> Dict[str, Any]:
+    """Try each launch target in order; return launch result or raise ScaleError."""
+    last_reason = "no target available"
+
+    for target in build_launch_targets():
+        region = target['region']
+        client = ec2_client(region)
+
+        cb_info = find_active_capacity_block(client, INSTANCE_TYPE)
+        if not cb_info:
+            last_reason = f"no active CB in {region}"
+            continue
+
+        subnet_id = find_subnet_in_az(client, target['subnet_ids'], cb_info['az'])
+        if not subnet_id:
+            last_reason = f"no subnet in {cb_info['az']} ({region})"
+            continue
+
+        try:
+            instance_id = launch_instance_into_cb(
+                client, target['launch_template'], cb_info, subnet_id, job_info
+            )
+        except ScaleError as e:
+            # Retryable launch failure in this region; try the next target.
+            last_reason = f"{region}: {e}"
+            continue
+
+        return {
+            'instance_id': instance_id,
+            'capacity_block_id': cb_info['id'],
+            'region': region,
+        }
+
+    raise ScaleError(last_reason)
 
 
 def parse_sqs_message(record: Dict[str, Any]) -> Dict[str, Any]:
@@ -171,13 +243,10 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         raise ValueError("LAUNCH_TEMPLATE_NAME environment variable is required")
     if not INSTANCE_TYPE:
         raise ValueError("INSTANCE_TYPE environment variable is required")
-    if not SUBNET_IDS or SUBNET_IDS == ['']:
+    if not SUBNET_IDS:
         raise ValueError("SUBNET_IDS environment variable is required")
 
-    results = {
-        'successful': [],
-        'failed': []
-    }
+    results = {'successful': [], 'failed': []}
 
     records = event.get('Records', [])
     logger.info(f"Processing {len(records)} SQS record(s)")
@@ -189,20 +258,13 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             job_info = parse_sqs_message(record)
             logger.info(f"Processing job: {job_info}")
 
-            cb_info = find_active_capacity_block(INSTANCE_TYPE)
-            if not cb_info:
-                raise ScaleError(f"No active Capacity Block for {INSTANCE_TYPE}")
-
-            subnet_id = find_subnet_in_az(cb_info['az'])
-            if not subnet_id:
-                raise ScaleError(f"No subnet in {cb_info['az']}")
-
-            instance_id = launch_instance_into_cb(cb_info, subnet_id, job_info)
+            launch = try_launch_for_job(job_info)
 
             results['successful'].append({
                 'message_id': message_id,
-                'instance_id': instance_id,
-                'capacity_block_id': cb_info['id']
+                'instance_id': launch['instance_id'],
+                'capacity_block_id': launch['capacity_block_id'],
+                'region': launch['region'],
             })
 
         except ScaleError as e:

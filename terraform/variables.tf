@@ -21,3 +21,13 @@ variable "webhook_secret" {
   type        = string
   sensitive   = true
 }
+
+variable "enable_h100_us_east_1" {
+  description = <<-EOT
+    When true, also launch H100 (p5.48xlarge) capacity-block runners in us-east-1.
+    The us-west-2 CB scale-up Lambda tries us-west-2 first, then us-east-1.
+    Default false keeps the deployment single-region (no change to existing infra).
+  EOT
+  type        = bool
+  default     = false
+}

@@ -142,15 +142,26 @@ resource "aws_lambda_function" "cb_scale_up" {
   memory_size      = 256
 
   environment {
-    variables = {
-      REGION               = var.aws_region
-      ENVIRONMENT          = local.environment
-      LAUNCH_TEMPLATE_NAME = aws_launch_template.cb_runner[each.key].name
-      SUBNET_IDS           = join(",", module.vpc.public_subnets)  # Public IPs for separate Docker Hub rate limits
-      INSTANCE_TYPE        = each.value.instance_type
-      RUNNER_NAME_PREFIX   = "${local.environment}-${each.key}-"
-      SSM_CONFIG_PATH      = "/github-action-runners/${local.environment}/${each.key}/runners/config"
-    }
+    variables = merge(
+      {
+        REGION               = var.aws_region
+        ENVIRONMENT          = local.environment
+        LAUNCH_TEMPLATE_NAME = aws_launch_template.cb_runner[each.key].name
+        SUBNET_IDS           = join(",", module.vpc.public_subnets) # Public IPs for separate Docker Hub rate limits
+        INSTANCE_TYPE        = each.value.instance_type
+        RUNNER_NAME_PREFIX   = "${local.environment}-${each.key}-"
+        SSM_CONFIG_PATH      = "/github-action-runners/${local.environment}/${each.key}/runners/config"
+      },
+      # Optional us-east-1 fallback for H100 (p5) only, when enabled. Tried after
+      # us-west-2. When the flag is off this adds nothing (identical to today).
+      (each.key == "gpu-p5-cb" && var.enable_h100_us_east_1) ? {
+        EXTRA_LAUNCH_TARGETS = jsonencode([{
+          region          = "us-east-1"
+          launch_template = one(aws_launch_template.cb_runner_use1[*].name)
+          subnet_ids      = one(module.vpc_use1[*].public_subnets)
+        }])
+      } : {}
+    )
   }
 
   tags = {
@@ -235,7 +246,11 @@ resource "aws_iam_role_policy" "cb_scale_up" {
         Action = [
           "iam:PassRole"
         ]
-        Resource = aws_iam_role.cb_runner.arn
+        # us-west-2 runner role always; us-east-1 runner role only when enabled.
+        Resource = compact([
+          aws_iam_role.cb_runner.arn,
+          try(aws_iam_role.cb_runner_use1[0].arn, null)
+        ])
       }
     ]
   })
