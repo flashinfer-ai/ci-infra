@@ -152,14 +152,11 @@ resource "aws_lambda_function" "cb_scale_up" {
         RUNNER_NAME_PREFIX   = "${local.environment}-${each.key}-"
         SSM_CONFIG_PATH      = "/github-action-runners/${local.environment}/${each.key}/runners/config"
       },
-      # Optional us-east-1 fallback for H100 (p5) only, when enabled. Tried after
-      # us-west-2. When the flag is off this adds nothing (identical to today).
-      (each.key == "gpu-p5-cb" && var.enable_h100_us_east_1) ? {
-        EXTRA_LAUNCH_TARGETS = jsonencode([{
-          region          = "us-east-1"
-          launch_template = one(aws_launch_template.cb_runner_use1[*].name)
-          subnet_ids      = one(module.vpc_use1[*].public_subnets)
-        }])
+      # Secondary regions that can host this runner kind, tried in order after
+      # var.aws_region (see cb-secondary-regions.tf). Adds nothing when none are
+      # enabled, leaving the Lambda single-region.
+      length(local.cb_secondary_targets[each.key]) > 0 ? {
+        EXTRA_LAUNCH_TARGETS = jsonencode(local.cb_secondary_targets[each.key])
       } : {}
     )
   }
@@ -246,11 +243,11 @@ resource "aws_iam_role_policy" "cb_scale_up" {
         Action = [
           "iam:PassRole"
         ]
-        # us-west-2 runner role always; us-east-1 runner role only when enabled.
-        Resource = compact([
-          aws_iam_role.cb_runner.arn,
-          try(aws_iam_role.cb_runner_use1[0].arn, null)
-        ])
+        # Home-region runner role always, plus one per enabled secondary region.
+        Resource = concat(
+          [aws_iam_role.cb_runner.arn],
+          local.cb_secondary_runner_role_arns
+        )
       }
     ]
   })

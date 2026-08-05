@@ -91,6 +91,21 @@ All multi-GPU nodes run 4 runners: 4x 2-GPU runners (GPUs 0-1, 2-3, 4-5, 6-7).
 
 See `terraform/templates/runner-configs/*.yaml` for the full list of instance types.
 
+### Capacity Block Regions
+
+Capacity Blocks are only offered in some regions at a time and expire, so CB
+runners can be launched outside the home region. The `cb-scale-up` Lambda stays
+in `us-west-2` and tries it first, then each region in `var.cb_secondary_regions`
+(currently `us-east-1` then `us-west-1`), launching into whichever has an active
+Capacity Block. Runners register with the same labels wherever they boot, so
+workflows do not need to know which region served them.
+
+Each secondary region gets its own VPC, security group, instance role and launch
+template from `terraform/modules/cb-region`. To follow a new reservation into a
+new region, add an entry to `var.cb_secondary_regions`, a provider alias in
+`terraform/providers.tf`, and a module block in
+`terraform/cb-secondary-regions.tf`; set `enabled = false` to drop a region.
+
 ## License
 
 Apache License 2.0 - see [LICENSE](LICENSE) file for details.

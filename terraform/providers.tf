@@ -9,11 +9,25 @@ provider "aws" {
   }
 }
 
-# Secondary region for H100 (p5) capacity-block runners when us-west-2 has no
-# p5 capacity. Only used by resources gated on var.enable_h100_us_east_1.
+# Secondary regions for capacity-block runners, used when the home region has no
+# active Capacity Block. Terraform cannot for_each provider configurations, so
+# each region in var.cb_secondary_regions needs an alias declared here; the
+# matching substrate lives in cb-secondary-regions.tf.
 provider "aws" {
   alias  = "use1"
   region = "us-east-1"
+
+  default_tags {
+    tags = {
+      Project   = "FlashInfer-CI"
+      ManagedBy = "Terraform"
+    }
+  }
+}
+
+provider "aws" {
+  alias  = "usw1"
+  region = "us-west-1"
 
   default_tags {
     tags = {
