@@ -52,6 +52,17 @@ echo "SSM Region (credentials): $SSM_REGION"
 echo "Instance Type: $INSTANCE_TYPE"
 echo "Environment: $ENVIRONMENT"
 
+# Automatic upgrades restart dbus, which kills dockerd's in-flight request to
+# systemd for a container's cgroup scope and fails the job.
+systemctl stop --no-block apt-daily.timer apt-daily-upgrade.timer \
+    unattended-upgrades.service 2>/dev/null || true
+systemctl mask apt-daily.timer apt-daily-upgrade.timer \
+    apt-daily.service apt-daily-upgrade.service \
+    unattended-upgrades.service 2>/dev/null || true
+
+# Wait out an upgrade that is already holding the dpkg lock.
+echo 'DPkg::Lock::Timeout "300";' > /etc/apt/apt.conf.d/99-lock-timeout
+
 # Install dependencies
 apt-get update
 apt-get install -y jq curl unzip

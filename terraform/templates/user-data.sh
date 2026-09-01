@@ -11,6 +11,17 @@ set -x
 
 ${pre_install}
 
+# Automatic upgrades restart dbus, which kills dockerd's in-flight request to
+# systemd for a container's cgroup scope and fails the job.
+systemctl stop --no-block apt-daily.timer apt-daily-upgrade.timer \
+    unattended-upgrades.service 2>/dev/null || true
+systemctl mask apt-daily.timer apt-daily-upgrade.timer \
+    apt-daily.service apt-daily-upgrade.service \
+    unattended-upgrades.service 2>/dev/null || true
+
+# Wait out an upgrade that is already holding the dpkg lock.
+echo 'DPkg::Lock::Timeout "300";' > /etc/apt/apt.conf.d/99-lock-timeout
+
 # Install dependencies using apt (Ubuntu)
 apt-get -q update
 DEBIAN_FRONTEND=noninteractive apt-get install -q -y \
