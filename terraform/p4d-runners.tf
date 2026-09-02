@@ -193,11 +193,8 @@ resource "aws_iam_role_policy" "p4d_scale_up" {
       {
         Effect = "Allow"
         Action = [
-          "ec2:DescribeSubnets",
-          "ec2:DescribeInstances",
           "ec2:RunInstances",
           "ec2:CreateTags",
-          "ec2:CreateFleet"
         ]
         Resource = "*"
       },
