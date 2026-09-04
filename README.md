@@ -80,14 +80,16 @@ All runners are registered at the organization level and available to all reposi
 |------|-----|------------------|----------|---------|
 | A100 2-GPU | SM80 | `[self-hosted, linux, x64, gpu, a100, 2gpu]` | p4d.24xlarge | Spot + on-demand fallback |
 
-**Capacity Block Runners** (4 runners per instance: 4x 2-GPU):
+**Capacity Block Runners**:
 
 | Type | GPU | `runs-on` Labels | Instance | Pricing |
 |------|-----|------------------|----------|---------|
-| H100 2-GPU | SM90 | `[self-hosted, linux, x64, gpu, h100, 2gpu]` | p5.48xlarge | Capacity Block |
-| B200 2-GPU | SM100 | `[self-hosted, linux, x64, gpu, b200, 2gpu]` | p6-b200.48xlarge | Capacity Block |
+| H100 4-GPU | SM90 | `[self-hosted, linux, x64, gpu, h100, 4gpu]` | p5.48xlarge | Capacity Block |
+| B200 4-GPU | SM100 | `[self-hosted, linux, x64, gpu, b200, 4gpu]` | p6-b200.48xlarge | Capacity Block |
 
-All multi-GPU nodes run 4 runners: 4x 2-GPU runners (GPUs 0-1, 2-3, 4-5, 6-7).
+Each 8-GPU node is split into runners of `gpus_per_runner` consecutive GPUs, so
+H100 and B200 nodes give 2 runners (GPUs 0-3, 4-7) and A100 nodes give 4 (0-1,
+2-3, 4-5, 6-7).
 
 See `terraform/templates/runner-configs/*.yaml` for the full list of instance types.
 

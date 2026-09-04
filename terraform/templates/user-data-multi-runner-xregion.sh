@@ -4,7 +4,7 @@
 #   - GitHub App credentials are read from SSM in SSM_REGION (where they live, us-west-2)
 #   - the instance's own region (for create-tags) is derived from IMDS, so this
 #     template works in any region without hardcoding it.
-# Launches 4x 2-GPU runners on a single 8-GPU node (GPUs 0-1, 2-3, 4-5, 6-7).
+# Splits the 8-GPU node into 8 / gpus_per_runner runners over consecutive GPUs.
 
 exec > >(tee /var/log/user-data.log | logger -t user-data -s 2>/dev/console) 2>&1
 
@@ -228,14 +228,20 @@ if [ -z "$ACCESS_TOKEN" ] || [ "$ACCESS_TOKEN" == "null" ]; then
     exit 1
 fi
 
-# Define runner configurations
+# Split the node's 8 GPUs into consecutive runners of GPUS_PER_RUNNER each.
 # Format: runner_id:name_suffix:labels:cuda_devices
-declare -a RUNNERS=(
-    "1:2gpu-a:$LABELS_BASE,2gpu,multi-gpu:0,1"
-    "2:2gpu-b:$LABELS_BASE,2gpu,multi-gpu:2,3"
-    "3:2gpu-c:$LABELS_BASE,2gpu,multi-gpu:4,5"
-    "4:2gpu-d:$LABELS_BASE,2gpu,multi-gpu:6,7"
-)
+GPUS_PER_RUNNER=${gpus_per_runner}
+SUFFIXES=(a b c d e f g h)
+
+declare -a RUNNERS=()
+for ((first = 0; first + GPUS_PER_RUNNER <= 8; first += GPUS_PER_RUNNER)); do
+    runner_id=$((first / GPUS_PER_RUNNER + 1))
+    devices=""
+    for ((gpu = first; gpu < first + GPUS_PER_RUNNER; gpu++)); do
+        devices="$${devices:+$devices,}$gpu"
+    done
+    RUNNERS+=("$runner_id:$${GPUS_PER_RUNNER}gpu-$${SUFFIXES[runner_id - 1]}:$LABELS_BASE,$${GPUS_PER_RUNNER}gpu,multi-gpu:$devices")
+done
 
 echo "Setting up $${#RUNNERS[@]} runners..."
 
@@ -262,7 +268,7 @@ systemctl list-units --type=service | grep actions-runner
 
 # Tag instance with runner info (use the instance's own region, from IMDS)
 aws ec2 create-tags --region "$INSTANCE_REGION" --resources "$INSTANCE_ID" --tags \
-    Key=ghr:runners,Value="4" \
+    Key=ghr:runners,Value="$${#RUNNERS[@]}" \
     Key=ghr:gpu_type,Value="$GPU_TYPE"
 
 echo "Setup finished at $(date)"

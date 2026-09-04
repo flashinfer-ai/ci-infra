@@ -4,11 +4,12 @@
 
 locals {
   p4d_config = {
-    instance_type = "p4d.24xlarge"
-    gpu_type      = "a100"
-    labels        = ["sm80", "a100"]
-    labels_base   = "self-hosted,linux,x64,gpu,nvidia,a100,sm80"
-    description   = "A100 GPU (Ampere)"
+    instance_type   = "p4d.24xlarge"
+    gpu_type        = "a100"
+    labels          = ["sm80", "a100"]
+    labels_base     = "self-hosted,linux,x64,gpu,nvidia,a100,sm80"
+    description     = "A100 GPU (Ampere)"
+    gpus_per_runner = 2
   }
 }
 
@@ -251,6 +252,7 @@ resource "aws_launch_template" "p4d_runner" {
     org_name             = "flashinfer-ai"
     runner_group         = "Default"
     labels_base          = local.p4d_config.labels_base
+    gpus_per_runner      = local.p4d_config.gpus_per_runner
   }))
 
   tag_specifications {

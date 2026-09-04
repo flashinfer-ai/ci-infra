@@ -37,6 +37,7 @@ locals {
         org_name             = "flashinfer-ai"
         runner_group         = "Default"
         labels_base          = cfg.labels_base
+        gpus_per_runner      = cfg.gpus_per_runner
       }
     ))
   }

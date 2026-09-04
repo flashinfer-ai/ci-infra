@@ -2,19 +2,23 @@
 
 locals {
   cb_runners = {
+    # The GPU unit tests are the longest job in pr-test and parallelize over the
+    # GPUs the runner exposes, so a CB node runs 2 wide runners, not 4 narrow ones.
     "gpu-p6-cb" = {
-      instance_type = "p6-b200.48xlarge"
-      gpu_type      = "b200"
-      labels        = ["sm100", "b200", "blackwell"]
-      labels_base   = "self-hosted,linux,x64,gpu,nvidia,b200,blackwell,capacity-block"
-      description   = "B200 GPU (Blackwell)"
+      instance_type   = "p6-b200.48xlarge"
+      gpu_type        = "b200"
+      labels          = ["sm100", "b200", "blackwell"]
+      labels_base     = "self-hosted,linux,x64,gpu,nvidia,b200,blackwell,capacity-block"
+      description     = "B200 GPU (Blackwell)"
+      gpus_per_runner = 4
     }
     "gpu-p5-cb" = {
-      instance_type = "p5.48xlarge"
-      gpu_type      = "h100"
-      labels        = ["sm90", "h100", "hopper"]
-      labels_base   = "self-hosted,linux,x64,gpu,nvidia,h100,hopper,capacity-block"
-      description   = "H100 GPU (Hopper)"
+      instance_type   = "p5.48xlarge"
+      gpu_type        = "h100"
+      labels          = ["sm90", "h100", "hopper"]
+      labels_base     = "self-hosted,linux,x64,gpu,nvidia,h100,hopper,capacity-block"
+      description     = "H100 GPU (Hopper)"
+      gpus_per_runner = 4
     }
   }
 }
@@ -285,16 +289,17 @@ resource "aws_launch_template" "cb_runner" {
   }
 
   user_data = base64encode(templatefile("${path.module}/templates/user-data-multi-runner.sh", {
-    region              = var.aws_region
-    environment         = local.environment
-    instance_type       = each.value.instance_type
-    gpu_type            = each.value.gpu_type
-    ssm_config_path     = "/github-action-runners/${local.environment}/${each.key}/runners/config"
-    github_app_id_param = "/github-action-runners/${local.environment}/app/github_app_id"
+    region               = var.aws_region
+    environment          = local.environment
+    instance_type        = each.value.instance_type
+    gpu_type             = each.value.gpu_type
+    ssm_config_path      = "/github-action-runners/${local.environment}/${each.key}/runners/config"
+    github_app_id_param  = "/github-action-runners/${local.environment}/app/github_app_id"
     github_app_key_param = "/github-action-runners/${local.environment}/app/github_app_key_base64"
-    org_name            = "flashinfer-ai"
-    runner_group        = "Default"
-    labels_base         = each.value.labels_base
+    org_name             = "flashinfer-ai"
+    runner_group         = "Default"
+    labels_base          = each.value.labels_base
+    gpus_per_runner      = each.value.gpus_per_runner
   }))
 
   tag_specifications {
