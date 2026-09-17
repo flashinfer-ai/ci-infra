@@ -171,7 +171,7 @@ setup_runner() {
     # Download runner if not exists
     if [ ! -f "./config.sh" ]; then
         echo "Downloading GitHub Actions runner..."
-        curl -sL https://github.com/actions/runner/releases/download/v2.321.0/actions-runner-linux-x64-2.321.0.tar.gz | tar xz
+        curl -sL "https://github.com/actions/runner/releases/download/v$RUNNER_VERSION/actions-runner-linux-x64-$RUNNER_VERSION.tar.gz" | tar xz
     fi
 
     # Set ownership to run_as user before configuring
@@ -242,6 +242,15 @@ for ((first = 0; first + GPUS_PER_RUNNER <= 8; first += GPUS_PER_RUNNER)); do
     done
     RUNNERS+=("$runner_id:$${GPUS_PER_RUNNER}gpu-$${SUFFIXES[runner_id - 1]}:$LABELS_BASE,$${GPUS_PER_RUNNER}gpu,multi-gpu:$devices")
 done
+
+# GitHub refuses registration from runners below a minimum version, so a pinned
+# version eventually 404s on runner-registration and, under bash -e, takes the
+# whole boot down before any runner is configured. Track the current release and
+# fall back to the floor GitHub enforces if the API is unreachable.
+RUNNER_VERSION=$(curl -sfL https://api.github.com/repos/actions/runner/releases/latest \
+    | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p' | head -1)
+RUNNER_VERSION=$${RUNNER_VERSION:-2.329.0}
+echo "GitHub Actions runner version: $RUNNER_VERSION"
 
 echo "Setting up $${#RUNNERS[@]} runners..."
 
