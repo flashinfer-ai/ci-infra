@@ -73,6 +73,7 @@ All runners are registered at the organization level and available to all reposi
 | CPU ARM64 | - | `[self-hosted, linux, arm64, cpu, on-demand]` | r6g/r7g/r8g (16xlarge), m6g/m7g (24xlarge) |
 | GPU T4 | SM75 | `[self-hosted, linux, x64, gpu, sm75, on-demand]` | g4dn (2xlarge, 4xlarge, 8xlarge) |
 | GPU A10G | SM86 | `[self-hosted, linux, x64, gpu, sm86, on-demand]` | g5 (2xlarge, 4xlarge, 8xlarge) |
+| GPU RTX PRO 6000 | SM120 | `[self-hosted, linux, x64, gpu, sm120, on-demand]` | g7e (4xlarge, 8xlarge) |
 
 **Multi-GPU Spot Runners** (4 runners per instance: 4x 2-GPU):
 
