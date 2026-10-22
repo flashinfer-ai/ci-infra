@@ -8,6 +8,7 @@ This document describes the GPU runner configurations for FlashInfer CI.
 |-------------|-----|--------------|-----|--------------|--------|
 | gpu-g4dn.yaml | T4 | g4dn.xlarge | SM75 | Turing | gpu, nvidia, t4, sm75, turing |
 | gpu-g5.yaml | A10G | g5.xlarge | SM86 | Ampere | gpu, nvidia, a10g, sm86, ampere |
+| gpu-g7e-ondemand.yaml | RTX PRO 6000 | g7e.4xlarge, g7e.8xlarge | SM120 | Blackwell | gpu, nvidia, rtx-pro-6000, sm120, blackwell |
 
 ## Planned GPU Runners
 
@@ -121,6 +122,14 @@ terraform apply
 - 24GB GPU memory
 - Good for: Primary GPU testing, SM86 architecture
 - Spot pricing: ~$0.50/hr (us-west-2)
+
+### G7e (RTX PRO 6000 Blackwell Server Edition)
+- 96GB GPU memory
+- Good for: SM120 (Blackwell RTX) tests
+- On-demand only: full-suite jobs run for hours, so spot interruption is costly
+- g7e.2xlarge (64 GiB host memory) is too small for the host-memory-heavy tests
+- Uses the Deep Learning Base OSS Nvidia Driver AMI (Ubuntu 24.04), which supports G7e
+- On-demand pricing: ~$4.00/hr (4xlarge), ~$5.27/hr (8xlarge) (us-west-2)
 
 ### P4d (A100) - Planned
 - 40GB or 80GB GPU memory
