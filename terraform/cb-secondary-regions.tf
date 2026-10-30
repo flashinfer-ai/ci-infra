@@ -17,8 +17,10 @@
 # the Lambda's fallback list; nothing else in the config needs to change.
 
 locals {
-  cb_region_use1 = var.cb_secondary_regions["us-east-1"]
-  cb_region_usw1 = var.cb_secondary_regions["us-west-1"]
+  cb_region_use1  = var.cb_secondary_regions["us-east-1"]
+  cb_region_usw1  = var.cb_secondary_regions["us-west-1"]
+  cb_region_eun1  = var.cb_secondary_regions["eu-north-1"]
+  cb_region_apne1 = var.cb_secondary_regions["ap-northeast-1"]
 
   # User data is region-independent: the xregion template reads the instance's
   # own region from IMDS and the GitHub App credentials from the home region's
@@ -75,6 +77,38 @@ module "cb_region_usw1" {
   user_data   = local.cb_xregion_user_data[local.cb_region_usw1.runner_key]
 }
 
+module "cb_region_eun1" {
+  source = "./modules/cb-region"
+  count  = local.cb_region_eun1.enabled ? 1 : 0
+
+  providers = { aws = aws.eun1 }
+
+  environment = local.environment
+  ssm_region  = var.aws_region
+  short_code  = local.cb_region_eun1.short_code
+  runner_key  = local.cb_region_eun1.runner_key
+  gpu_type    = local.cb_runners[local.cb_region_eun1.runner_key].gpu_type
+  vpc_cidr    = local.cb_region_eun1.vpc_cidr
+  azs         = local.cb_region_eun1.azs
+  user_data   = local.cb_xregion_user_data[local.cb_region_eun1.runner_key]
+}
+
+module "cb_region_apne1" {
+  source = "./modules/cb-region"
+  count  = local.cb_region_apne1.enabled ? 1 : 0
+
+  providers = { aws = aws.apne1 }
+
+  environment = local.environment
+  ssm_region  = var.aws_region
+  short_code  = local.cb_region_apne1.short_code
+  runner_key  = local.cb_region_apne1.runner_key
+  gpu_type    = local.cb_runners[local.cb_region_apne1.runner_key].gpu_type
+  vpc_cidr    = local.cb_region_apne1.vpc_cidr
+  azs         = local.cb_region_apne1.azs
+  user_data   = local.cb_xregion_user_data[local.cb_region_apne1.runner_key]
+}
+
 locals {
   # Flattened view of the substrates that exist, in Lambda fallback order. A
   # disabled region has zero module instances and so contributes nothing. The
@@ -82,6 +116,8 @@ locals {
   cb_secondary_substrates = concat(
     [for m in module.cb_region_use1 : merge(m, { runner_key = local.cb_region_use1.runner_key })],
     [for m in module.cb_region_usw1 : merge(m, { runner_key = local.cb_region_usw1.runner_key })],
+    [for m in module.cb_region_eun1 : merge(m, { runner_key = local.cb_region_eun1.runner_key })],
+    [for m in module.cb_region_apne1 : merge(m, { runner_key = local.cb_region_apne1.runner_key })],
   )
 
   # Fallback launch targets per CB runner kind, in the shape the Lambda's

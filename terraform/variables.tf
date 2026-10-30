@@ -25,10 +25,10 @@ variable "webhook_secret" {
 variable "cb_secondary_regions" {
   description = <<-EOT
     Regions besides var.aws_region that can host capacity-block runners, keyed by
-    region. The cb-scale-up Lambda tries var.aws_region first, then these in key
-    order, launching into whichever has an active Capacity Block. Capacity Blocks
-    are only offered in some regions at a time, so this is how a new reservation
-    in a new region gets picked up.
+    region. The cb-scale-up Lambda tries var.aws_region first, then these in the
+    registry order in cb-secondary-regions.tf, launching into whichever has an
+    active Capacity Block. Capacity Blocks are only offered in some regions at
+    a time, so this is how a new reservation in a new region gets picked up.
 
     Adding a region needs three edits (Terraform cannot for_each providers):
     an entry here, a provider alias in providers.tf, and a module block plus a
@@ -65,12 +65,26 @@ variable "cb_secondary_regions" {
       # us-west-1 exposes a different AZ subset per account, so discover them.
       azs = null
     }
+    "eu-north-1" = {
+      enabled    = true
+      short_code = "eun1"
+      vpc_cidr   = "10.3.0.0/16"
+      runner_key = "gpu-p5-cb"
+      azs        = null
+    }
+    "ap-northeast-1" = {
+      enabled    = true
+      short_code = "apne1"
+      vpc_cidr   = "10.4.0.0/16"
+      runner_key = "gpu-p5-cb"
+      azs        = null
+    }
   }
 
   validation {
     condition = alltrue([
-      for r in ["us-east-1", "us-west-1"] : contains(keys(var.cb_secondary_regions), r)
+      for r in ["us-east-1", "us-west-1", "eu-north-1", "ap-northeast-1"] : contains(keys(var.cb_secondary_regions), r)
     ])
-    error_message = "cb_secondary_regions must keep an entry for every region with a provider alias (us-east-1, us-west-1). Set enabled = false to turn one off instead of removing it."
+    error_message = "cb_secondary_regions must keep an entry for every region with a provider alias (us-east-1, us-west-1, eu-north-1, ap-northeast-1). Set enabled = false to turn one off instead of removing it."
   }
 }

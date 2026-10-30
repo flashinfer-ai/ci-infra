@@ -36,3 +36,27 @@ provider "aws" {
     }
   }
 }
+
+provider "aws" {
+  alias  = "eun1"
+  region = "eu-north-1"
+
+  default_tags {
+    tags = {
+      Project   = "FlashInfer-CI"
+      ManagedBy = "Terraform"
+    }
+  }
+}
+
+provider "aws" {
+  alias  = "apne1"
+  region = "ap-northeast-1"
+
+  default_tags {
+    tags = {
+      Project   = "FlashInfer-CI"
+      ManagedBy = "Terraform"
+    }
+  }
+}

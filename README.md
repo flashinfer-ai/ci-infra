@@ -99,9 +99,10 @@ See `terraform/templates/runner-configs/*.yaml` for the full list of instance ty
 Capacity Blocks are only offered in some regions at a time and expire, so CB
 runners can be launched outside the home region. The `cb-scale-up` Lambda stays
 in `us-west-2` and tries it first, then each region in `var.cb_secondary_regions`
-(currently `us-east-1` then `us-west-1`), launching into whichever has an active
-Capacity Block. Runners register with the same labels wherever they boot, so
-workflows do not need to know which region served them.
+(for H100: `us-east-1`, `us-west-1`, `eu-north-1`, then `ap-northeast-1`),
+launching into whichever has an active Capacity Block. Runners register with
+the same labels wherever they boot, so workflows do not need to know which
+region served them.
 
 Each secondary region gets its own VPC, security group, instance role and launch
 template from `terraform/modules/cb-region`. To follow a new reservation into a
