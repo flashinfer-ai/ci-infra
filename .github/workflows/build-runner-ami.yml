@@ -1,11 +1,12 @@
-name: Build CPU Runner AMI
-# Bakes the FlashInfer CI Docker images into the CPU runner AMI (see
-# terraform/prebaked-ami.tf and packer/cpu-runner.pkr.hcl), so the PR "AOT Build
-# Import" jobs skip their 4-6 minute image pull.
+name: Build Runner AMIs
+# Bakes the FlashInfer CI Docker images into the runner AMIs (see
+# terraform/prebaked-ami.tf and packer/runner.pkr.hcl), so jobs on fresh runners
+# skip their image pull: 4-6 minutes on the CPU runners (AOT builds), 4-8 on the
+# g4dn/g5 GPU runners.
 #
 # Every hour it reads ci/docker-tags.yml on flashinfer-ai/flashinfer main and
 # compares it with the images baked into the AMI each SSM parameter points at.
-# For each architecture that differs, or whose AMI is older than MAX_AMI_AGE_DAYS
+# For each AMI (cpu-x64, cpu-arm64, gpu-x64) that differs, or whose AMI is older than MAX_AMI_AGE_DAYS
 # (OS updates), it builds a new AMI, points the SSM parameter at it, and
 # deregisters all but the newest KEEP_AMIS AMIs. New runners use it from their
 # next launch; no Terraform apply is involved.
@@ -39,7 +40,8 @@ env:
   AWS_REGION: us-west-2
   PACKER_VERSION: "1.11.2"
   TAGS_URL: https://raw.githubusercontent.com/flashinfer-ai/flashinfer/main/ci/docker-tags.yml
-  SSM_PREFIX: /flashinfer/runners/ami/cpu-
+  SSM_PREFIX: /flashinfer/runners/ami/
+  AMIS: cpu-x64 cpu-arm64 gpu-x64
   KEEP_AMIS: "3"
   MAX_AMI_AGE_DAYS: "21"
 
@@ -54,11 +56,14 @@ jobs:
           version: ${{ env.PACKER_VERSION }}
       - name: Packer validate
         run: |
-          packer init packer/cpu-runner.pkr.hcl
+          packer init packer/runner.pkr.hcl
           packer fmt -check packer/
-          packer validate -var arch=x64 -var subnet_id=subnet-00000000 \
-            -var 'ci_images=["flashinfer/flashinfer-ci-cu130:tag"]' \
-            -var images_fingerprint=0 packer/cpu-runner.pkr.hcl
+          for ami in ${AMIS}; do
+            packer validate -var "flavor=${ami%-*}" -var "arch=${ami#*-}" \
+              -var subnet_id=subnet-00000000 \
+              -var 'ci_images=["flashinfer/flashinfer-ci-cu130:tag"]' \
+              -var images_fingerprint=0 packer/runner.pkr.hcl
+          done
       - name: Shellcheck
         run: shellcheck packer/scripts/*.sh
 
@@ -95,14 +100,14 @@ jobs:
 
           now=$(date +%s)
           matrix='[]'
-          for arch in x64 arm64; do
-            ami=$(aws ssm get-parameter --name "${SSM_PREFIX}${arch}" --query Parameter.Value --output text)
+          for name in ${AMIS}; do
+            ami=$(aws ssm get-parameter --name "${SSM_PREFIX}${name}" --query Parameter.Value --output text)
             read -r baked created < <(aws ec2 describe-images --image-ids "${ami}" \
               --query 'Images[0].[Tags[?Key==`CiImagesHash`]|[0].Value, CreationDate]' --output text)
             age_days=$(( (now - $(date -d "${created}" +%s)) / 86400 ))
-            echo "${arch}: ${ami} baked=${baked} age=${age_days}d"
+            echo "${name}: ${ami} baked=${baked} age=${age_days}d"
             if [[ ${FORCE} == true || ${baked} != "${fingerprint}" || ${age_days} -ge ${MAX_AMI_AGE_DAYS} ]]; then
-              matrix=$(jq -c --arg a "${arch}" '. + [$a]' <<<"${matrix}")
+              matrix=$(jq -c --arg a "${name}" '. + [$a]' <<<"${matrix}")
             fi
           done
           {
@@ -119,7 +124,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        arch: ${{ fromJson(needs.check.outputs.matrix) }}
+        ami: ${{ fromJson(needs.check.outputs.matrix) }}
+    env:
+      AMI_NAME: ${{ matrix.ami }}
     steps:
       - uses: actions/checkout@v4
 
@@ -144,31 +151,33 @@ jobs:
           subnet=$(aws ec2 describe-subnets \
             --filters "Name=tag:Name,Values=flashinfer-vpc-public-${AWS_REGION}*" \
             --query 'Subnets[0].SubnetId' --output text)
-          packer init packer/cpu-runner.pkr.hcl
+          packer init packer/runner.pkr.hcl
           packer build -color=false \
-            -var "arch=${{ matrix.arch }}" \
+            -var "flavor=${AMI_NAME%-*}" \
+            -var "arch=${AMI_NAME#*-}" \
             -var "region=${AWS_REGION}" \
             -var "subnet_id=${subnet}" \
             -var "ci_images=${IMAGES}" \
             -var "images_fingerprint=${FINGERPRINT}" \
-            packer/cpu-runner.pkr.hcl
+            packer/runner.pkr.hcl
 
       - name: Point the runners at the new AMI
         run: |
           set -euo pipefail
-          ami=$(jq -r '.builds[-1].artifact_id' "packer/manifest-${{ matrix.arch }}.json" | cut -d: -f2)
+          ami=$(jq -r '.builds[-1].artifact_id' "packer/manifest-${AMI_NAME}.json" | cut -d: -f2)
           [[ ${ami} == ami-* ]] || { echo "::error::No AMI in the Packer manifest"; exit 1; }
           aws ec2 wait image-available --image-ids "${ami}"
-          aws ssm put-parameter --name "${SSM_PREFIX}${{ matrix.arch }}" \
+          aws ssm put-parameter --name "${SSM_PREFIX}${AMI_NAME}" \
             --type String --data-type aws:ec2:image --value "${ami}" --overwrite
-          echo "::notice::${{ matrix.arch }} CPU runners now launch from ${ami}"
+          echo "::notice::${AMI_NAME} runners now launch from ${ami}"
 
       - name: Deregister old AMIs
         run: |
           set -euo pipefail
-          live=$(aws ssm get-parameter --name "${SSM_PREFIX}${{ matrix.arch }}" --query Parameter.Value --output text)
+          live=$(aws ssm get-parameter --name "${SSM_PREFIX}${AMI_NAME}" --query Parameter.Value --output text)
           aws ec2 describe-images --owners self \
-            --filters "Name=tag:Purpose,Values=flashinfer-cpu-runner" "Name=tag:Arch,Values=${{ matrix.arch }}" \
+            --filters "Name=tag:Purpose,Values=flashinfer-runner" \
+              "Name=tag:Flavor,Values=${AMI_NAME%-*}" "Name=tag:Arch,Values=${AMI_NAME#*-}" \
             --query 'sort_by(Images, &CreationDate)[].[ImageId, join(`,`, BlockDeviceMappings[].Ebs.SnapshotId)]' \
             --output text | head -n -"${KEEP_AMIS}" | while read -r ami snapshots; do
               [[ ${ami} == "${live}" ]] && continue
