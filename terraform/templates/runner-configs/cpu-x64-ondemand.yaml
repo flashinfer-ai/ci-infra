@@ -55,6 +55,9 @@ runner_config:
 
   # No idle_config - on-demand runners are fallback only, don't keep warm
 
+  # Overridden in terraform/main.tf: these runners launch from the AMI in SSM
+  # parameter /flashinfer/runners/ami/cpu-<arch> (see prebaked-ami.tf), which
+  # has the CI images pre-pulled. The filter below documents its base image.
   # Use Ubuntu 22.04 AMI
   ami:
     owners:

@@ -110,6 +110,25 @@ new region, add an entry to `var.cb_secondary_regions`, a provider alias in
 `terraform/providers.tf`, and a module block in
 `terraform/cb-secondary-regions.tf`; set `enabled = false` to drop a region.
 
+### Pre-baked CPU Runner AMI
+
+The on-demand CPU runners (`cpu-x64-ondemand`, `cpu-arm64-ondemand`) launch from
+an AMI that already holds the CI images listed in FlashInfer's
+[`ci/docker-tags.yml`](https://github.com/flashinfer-ai/flashinfer/blob/main/ci/docker-tags.yml),
+so the AOT build jobs skip their 4-6 minute `docker pull`.
+
+- `packer/cpu-runner.pkr.hcl` builds it: stock Ubuntu 22.04, Docker installed as
+  `templates/user-data.sh` installs it, and the images pulled into the rootless
+  Docker data root. `/etc/flashinfer-ci-images` on a runner lists what was baked.
+- `.github/workflows/build-runner-ami.yml` checks hourly and rebuilds an
+  architecture's AMI when the tags change or it is 21 days old, then writes the
+  AMI ID to SSM parameter `/flashinfer/runners/ami/cpu-<x64|arm64>`.
+- The launch templates resolve that parameter at launch (`terraform/prebaked-ami.tf`),
+  so no Terraform apply is needed. Run the workflow with `force` to rebuild now.
+- Missing or outdated images are still pulled by the job, so a failed build only
+  costs time. To roll back, put an older AMI ID (or a stock Canonical one) in the
+  parameter.
+
 ## License
 
 Apache License 2.0 - see [LICENSE](LICENSE) file for details.
