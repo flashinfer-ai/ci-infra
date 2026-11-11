@@ -1,0 +1,189 @@
+name: Build Runner AMIs
+# Bakes the FlashInfer CI Docker images into the runner AMIs (see
+# terraform/prebaked-ami.tf and packer/runner.pkr.hcl), so jobs on fresh runners
+# skip their image pull: 4-6 minutes on the CPU runners (AOT builds), 4-8 on the
+# g4dn/g5 GPU runners.
+#
+# Every hour it reads ci/docker-tags.yml on flashinfer-ai/flashinfer main and
+# compares it with the images baked into the AMI each SSM parameter points at.
+# For each AMI (cpu-x64, cpu-arm64, gpu-x64) that differs, or whose AMI is older than MAX_AMI_AGE_DAYS
+# (OS updates), it builds a new AMI, points the SSM parameter at it, and
+# deregisters all but the newest KEEP_AMIS AMIs. New runners use it from their
+# next launch; no Terraform apply is involved.
+#
+# Until a new AMI is live (or if this workflow fails), runners still work: the
+# jobs pull whatever image is missing, as they do today.
+
+on:
+  schedule:
+    - cron: '41 * * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Rebuild even if the AMIs are up to date'
+        type: boolean
+        default: false
+  pull_request:
+    paths:
+      - 'packer/**'
+      - '.github/workflows/build-runner-ami.yml'
+
+concurrency:
+  group: build-runner-ami-${{ github.event_name == 'pull_request' && github.ref || 'main' }}
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-west-2
+  PACKER_VERSION: "1.11.2"
+  TAGS_URL: https://raw.githubusercontent.com/flashinfer-ai/flashinfer/main/ci/docker-tags.yml
+  SSM_PREFIX: /flashinfer/runners/ami/
+  AMIS: cpu-x64 cpu-arm64 gpu-x64
+  KEEP_AMIS: "3"
+  MAX_AMI_AGE_DAYS: "21"
+
+jobs:
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-packer@v3
+        with:
+          version: ${{ env.PACKER_VERSION }}
+      - name: Packer validate
+        run: |
+          packer init packer/runner.pkr.hcl
+          packer fmt -check packer/
+          for ami in ${AMIS}; do
+            packer validate -var "flavor=${ami%-*}" -var "arch=${ami#*-}" \
+              -var subnet_id=subnet-00000000 \
+              -var 'ci_images=["flashinfer/flashinfer-ci-cu130:tag"]' \
+              -var images_fingerprint=0 packer/runner.pkr.hcl
+          done
+      - name: Shellcheck
+        run: shellcheck packer/scripts/*.sh
+
+  check:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.check.outputs.matrix }}
+      images: ${{ steps.check.outputs.images }}
+      fingerprint: ${{ steps.check.outputs.fingerprint }}
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Compare docker-tags.yml with the live AMIs
+        id: check
+        env:
+          FORCE: ${{ github.event.inputs.force || 'false' }}
+        run: |
+          set -euo pipefail
+          # Lines look like "flashinfer/flashinfer-ci-cu130: 20261106-54b9f685".
+          images=$(curl -fsSL --retry 3 "${TAGS_URL}" \
+            | sed -nE 's#^(flashinfer/flashinfer-ci-[A-Za-z0-9._-]+):[[:space:]]*([A-Za-z0-9._-]+)[[:space:]]*$#\1:\2#p' \
+            | sort)
+          if [[ -z ${images} ]]; then
+            echo "::error::No images parsed from ${TAGS_URL}"
+            exit 1
+          fi
+          fingerprint=$(printf '%s\n' "${images}" | sha256sum | cut -c1-16)
+          echo "Images (${fingerprint}):"; printf '  %s\n' ${images}
+
+          now=$(date +%s)
+          matrix='[]'
+          for name in ${AMIS}; do
+            ami=$(aws ssm get-parameter --name "${SSM_PREFIX}${name}" --query Parameter.Value --output text)
+            read -r baked created < <(aws ec2 describe-images --image-ids "${ami}" \
+              --query 'Images[0].[Tags[?Key==`CiImagesHash`]|[0].Value, CreationDate]' --output text)
+            age_days=$(( (now - $(date -d "${created}" +%s)) / 86400 ))
+            echo "${name}: ${ami} baked=${baked} age=${age_days}d"
+            if [[ ${FORCE} == true || ${baked} != "${fingerprint}" || ${age_days} -ge ${MAX_AMI_AGE_DAYS} ]]; then
+              matrix=$(jq -c --arg a "${name}" '. + [$a]' <<<"${matrix}")
+            fi
+          done
+          {
+            echo "matrix=${matrix}"
+            echo "images=$(printf '%s\n' "${images}" | jq -Rnc '[inputs | select(length > 0)]')"
+            echo "fingerprint=${fingerprint}"
+          } >> "${GITHUB_OUTPUT}"
+
+  build:
+    needs: check
+    if: needs.check.outputs.matrix != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        ami: ${{ fromJson(needs.check.outputs.matrix) }}
+    env:
+      AMI_NAME: ${{ matrix.ami }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-duration-seconds: 10800
+
+      - uses: hashicorp/setup-packer@v3
+        with:
+          version: ${{ env.PACKER_VERSION }}
+
+      - name: Build AMI
+        env:
+          IMAGES: ${{ needs.check.outputs.images }}
+          FINGERPRINT: ${{ needs.check.outputs.fingerprint }}
+        run: |
+          set -euo pipefail
+          # A public subnet of the runners' VPC (terraform/vpc.tf).
+          subnet=$(aws ec2 describe-subnets \
+            --filters "Name=tag:Name,Values=flashinfer-vpc-public-${AWS_REGION}*" \
+            --query 'Subnets[0].SubnetId' --output text)
+          packer init packer/runner.pkr.hcl
+          packer build -color=false \
+            -var "flavor=${AMI_NAME%-*}" \
+            -var "arch=${AMI_NAME#*-}" \
+            -var "region=${AWS_REGION}" \
+            -var "subnet_id=${subnet}" \
+            -var "ci_images=${IMAGES}" \
+            -var "images_fingerprint=${FINGERPRINT}" \
+            packer/runner.pkr.hcl
+
+      - name: Point the runners at the new AMI
+        run: |
+          set -euo pipefail
+          ami=$(jq -r '.builds[-1].artifact_id' "packer/manifest-${AMI_NAME}.json" | cut -d: -f2)
+          [[ ${ami} == ami-* ]] || { echo "::error::No AMI in the Packer manifest"; exit 1; }
+          aws ec2 wait image-available --image-ids "${ami}"
+          aws ssm put-parameter --name "${SSM_PREFIX}${AMI_NAME}" \
+            --type String --data-type aws:ec2:image --value "${ami}" --overwrite
+          echo "::notice::${AMI_NAME} runners now launch from ${ami}"
+
+      - name: Deregister old AMIs
+        run: |
+          set -euo pipefail
+          live=$(aws ssm get-parameter --name "${SSM_PREFIX}${AMI_NAME}" --query Parameter.Value --output text)
+          aws ec2 describe-images --owners self \
+            --filters "Name=tag:Purpose,Values=flashinfer-runner" \
+              "Name=tag:Flavor,Values=${AMI_NAME%-*}" "Name=tag:Arch,Values=${AMI_NAME#*-}" \
+            --query 'sort_by(Images, &CreationDate)[].[ImageId, join(`,`, BlockDeviceMappings[].Ebs.SnapshotId)]' \
+            --output text | head -n -"${KEEP_AMIS}" | while read -r ami snapshots; do
+              [[ ${ami} == "${live}" ]] && continue
+              echo "Deregistering ${ami} (${snapshots})"
+              aws ec2 deregister-image --image-id "${ami}"
+              for snap in ${snapshots//,/ }; do
+                aws ec2 delete-snapshot --snapshot-id "${snap}"
+              done
+            done

@@ -55,6 +55,9 @@ runner_config:
 
   # No idle_config - on-demand runners are fallback only, don't keep warm
 
+  # Overridden in terraform/main.tf: these runners launch from the AMI in SSM
+  # parameter /flashinfer/runners/ami/gpu-x64 (see prebaked-ami.tf), which is
+  # this base image with the CI images pre-pulled.
   # Use AWS Deep Learning AMI with Ubuntu 22.04 (has NVIDIA drivers pre-installed)
   ami:
     owners:

@@ -18,6 +18,16 @@ locals {
           {
             subnet_ids = module.vpc.public_subnets
             vpc_id     = module.vpc.vpc_id
+          },
+          # See prebaked-ami.tf: replaces the YAML's Canonical AMI filter. (A
+          # filtered for expression, since a conditional cannot return objects
+          # with different attributes.)
+          {
+            for attr, value in {
+              ami = {
+                id_ssm_parameter_arn = try(local.prebaked_ami_ssm_arns[local.prebaked_ami_runner_configs[k]], null)
+              }
+            } : attr => value if contains(keys(local.prebaked_ami_runner_configs), k)
           }
         )
       }
