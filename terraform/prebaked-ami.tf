@@ -53,6 +53,21 @@ locals {
   }
 }
 
+data "aws_caller_identity" "current" {}
+data "aws_partition" "current" {}
+
+locals {
+  # Built from plan-time values rather than aws_ssm_parameter.runner_ami[*].arn:
+  # the runner module derives resource counts from this ARN, so it must be known
+  # at plan time, and the parameter's arn is not until it exists. Its name is a
+  # configured value, and referencing it still orders the parameter before the
+  # launch templates that resolve it.
+  prebaked_ami_ssm_arns = {
+    for name, param in aws_ssm_parameter.runner_ami :
+    name => "arn:${data.aws_partition.current.partition}:ssm:${local.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${param.name}"
+  }
+}
+
 data "aws_ami" "prebaked_base" {
   for_each    = local.prebaked_amis
   most_recent = true

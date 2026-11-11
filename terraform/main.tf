@@ -25,7 +25,7 @@ locals {
           {
             for attr, value in {
               ami = {
-                id_ssm_parameter_arn = try(aws_ssm_parameter.runner_ami[local.prebaked_ami_runner_configs[k]].arn, null)
+                id_ssm_parameter_arn = try(local.prebaked_ami_ssm_arns[local.prebaked_ami_runner_configs[k]], null)
               }
             } : attr => value if contains(keys(local.prebaked_ami_runner_configs), k)
           }
