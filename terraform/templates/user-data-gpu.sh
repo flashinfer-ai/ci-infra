@@ -57,6 +57,35 @@ systemctl start docker
 # Add ubuntu user to docker group
 usermod -aG docker $user_name
 
+# Move Docker and containerd storage to the instance-store NVMe that the Deep
+# Learning AMI mounts at /opt/dlami/nvme (412 GB on g5.2xlarge, 206 GB on
+# g4dn.2xlarge), as user-data-multi-runner.sh does for the H100/B200 runners.
+# On the gp3 root (125 MB/s, 3000 IOPS) the 11.6 GB cu129 CI image took
+# 4.5-7.9 min to pull, 50-80% of a targeted A10G job. The instance store is
+# included in the instance price and its contents only need to live as long as
+# the runner. Instances without instance store keep using the root volume, and
+# so does an AMI with the CI images already baked into /var/lib/docker
+# (/etc/flashinfer-ci-images, packer/scripts/prebake-ci-images.sh): copying
+# them off a freshly restored root volume would be slower than using them there.
+if mountpoint -q /opt/dlami/nvme && [ ! -e /etc/flashinfer-ci-images ]; then
+    echo "Moving Docker storage to NVMe..."
+    systemctl stop docker docker.socket containerd 2>/dev/null || true
+    mkdir -p /opt/dlami/nvme/docker /opt/dlami/nvme/containerd
+    if [ -d /var/lib/docker ] && [ ! -L /var/lib/docker ]; then
+        rsync -a /var/lib/docker/ /opt/dlami/nvme/docker/ 2>/dev/null || true
+        rm -rf /var/lib/docker
+    fi
+    if [ -d /var/lib/containerd ] && [ ! -L /var/lib/containerd ]; then
+        rsync -a /var/lib/containerd/ /opt/dlami/nvme/containerd/ 2>/dev/null || true
+        rm -rf /var/lib/containerd
+    fi
+    ln -sfn /opt/dlami/nvme/docker /var/lib/docker
+    ln -sfn /opt/dlami/nvme/containerd /var/lib/containerd
+    systemctl start containerd docker
+else
+    echo "No instance store or pre-baked images; Docker stays on the root volume"
+fi
+
 # Configure NVIDIA Container Toolkit for Docker
 # First, run nvidia-ctk to add the nvidia runtime
 nvidia-ctk runtime configure --runtime=docker
@@ -118,6 +147,14 @@ echo "=== GPU Info ==="
 nvidia-smi || echo "WARNING: nvidia-smi failed"
 
 ${install_runner}
+
+# Put the runner work directory (checkout, JIT build outputs, compile cache)
+# on the instance-store NVMe too.
+if mountpoint -q /opt/dlami/nvme && [ ! -e /opt/actions-runner/_work ]; then
+    mkdir -p /opt/dlami/nvme/actions-runner-work
+    chown $user_name:$user_name /opt/dlami/nvme/actions-runner-work
+    ln -s /opt/dlami/nvme/actions-runner-work /opt/actions-runner/_work
+fi
 
 ${post_install}
 

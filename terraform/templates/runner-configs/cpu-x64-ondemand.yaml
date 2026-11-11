@@ -70,6 +70,12 @@ runner_config:
     - device_name: /dev/sda1
       volume_size: 500
       volume_type: gp3
+      # Above the gp3 defaults (3000 IOPS, 125 MB/s), which bound the CI image
+      # pull: the 8-12 GB image is written twice (containerd keeps the
+      # compressed blobs) and unpacked at ~125 MB/s, 4-6 min per job.
+      # Extra cost ~$0.04 per instance-hour.
+      iops: 6000
+      throughput: 500
       delete_on_termination: true
       encrypted: true
 
